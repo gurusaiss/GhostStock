@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GhostStock</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 26 26%22><path d=%22M13 2C7 2 3 6.5 3 12.5V22l3.2-2.6L9 22l3-2.6L15 22l2.8-2.6L21 22V12.5C21 6.5 17.4 2 13 2Z%22 fill=%22none%22 stroke=%22%233987e5%22 stroke-width=%221.8%22/><circle cx=%229.3%22 cy=%2211.5%22 r=%221.6%22 fill=%22%233987e5%22/><circle cx=%2216.7%22 cy=%2211.5%22 r=%221.6%22 fill=%22%233987e5%22/></svg>" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+      <path d="M13 2 C7 2 3 6.5 3 12.5 V22 l3.2-2.6L9 22l3-2.6L15 22l2.8-2.6L21 22V12.5C21 6.5 17.4 2 13 2Z"
+            fill="none" stroke="var(--series-1)" stroke-width="1.6"/>
+      <circle cx="9.3" cy="11.5" r="1.4" fill="var(--series-1)"/>
+      <circle cx="16.7" cy="11.5" r="1.4" fill="var(--series-1)"/>
+    </svg>
+    <div class="brand-text">
+      <div class="brand-name">GhostStock</div>
+      <div class="brand-sub">phantom stock-out detection</div>
+    </div>
+  </div>
+  <div class="source-toggle" role="tablist" aria-label="Data source">
+    <button class="seg-btn active" data-source="synthetic" role="tab" aria-selected="true">Synthetic demo</button>
+    <button class="seg-btn" data-source="upload" role="tab" aria-selected="false">Upload real CSV</button>
+  </div>
+</header>
+
+<main class="shell">
+
+  <p class="lede">
+    System inventory says a SKU is in stock. But it hasn't sold in weeks. Either nobody wants it
+    — or it isn't really there anymore. GhostStock finds the SKUs worth a manager's 5-minute aisle check.
+  </p>
+
+  <section id="upload-panel" class="card upload-card hidden">
+    <h2 class="card-title">Upload retailer CSV</h2>
+    <p class="muted-text">
+      Flexible column names accepted: <code>sku</code>/<code>sku_code</code>/<code>item_code</code>,
+      <code>store</code>/<code>store_id</code>, <code>date</code>, <code>qty_sold</code>/<code>units_sold</code>,
+      <code>qty_on_hand</code>/<code>stock_on_hand</code>.
+    </p>
+    <label class="dropzone" id="dropzone">
+      <input type="file" id="file-input" accept=".csv" hidden />
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 16V4M12 4 7 9M12 4l5 5" stroke="var(--muted-ink)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" stroke="var(--muted-ink)" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <span>Drop a CSV here or click to browse</span>
+    </label>
+    <div id="upload-status" class="upload-status"></div>
+  </section>
+
+  <section id="filter-row" class="filter-row hidden">
+    <div class="filter-field">
+      <label for="store-select">Store</label>
+      <select id="store-select"></select>
+    </div>
+    <div class="filter-field filter-field-grow">
+      <label for="date-select">Date (as-of)</label>
+      <input type="range" id="date-slider" min="0" max="0" value="0" />
+      <div class="date-readout" id="date-readout">—</div>
+    </div>
+    <button class="btn-ghost" id="latest-btn" title="Jump to the most recent date">Latest</button>
+  </section>
+
+  <section id="empty-state" class="card empty-state hidden">
+    <p>Upload a CSV above to analyze your own store data, or switch back to the synthetic demo dataset.</p>
+  </section>
+
+  <!-- -------------------------------------------------------- tab nav -->
+  <nav class="tabs hidden" id="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="alerts" role="tab" aria-selected="true">📋 Alerts</button>
+    <button class="tab-btn" data-tab="insights" role="tab" aria-selected="false">📈 Insights</button>
+    <button class="tab-btn" data-tab="impact" role="tab" aria-selected="false">💰 Impact</button>
+  </nav>
+
+  <!-- ------------------------------------------------------ Alerts tab -->
+  <div class="tab-panel" data-panel="alerts">
+
+    <section id="kpi-row" class="kpi-row hidden"></section>
+
+    <section id="alerts-section" class="card hidden">
+      <div class="card-head">
+        <h2 class="card-title">Today's Top-<span id="top-n">20</span> Alerts</h2>
+        <div class="card-subtitle" id="alerts-subtitle"></div>
+      </div>
+
+      <div class="toolbar">
+        <input type="search" id="sku-search" class="search-input" placeholder="Search SKU…" />
+        <div class="chip-group" id="severity-filter">
+          <button class="chip active" data-severity="all">All</button>
+          <button class="chip chip-critical" data-severity="high">High</button>
+          <button class="chip chip-warning" data-severity="medium">Medium</button>
+          <button class="chip chip-muted" data-severity="low">Low</button>
+        </div>
+        <div class="toolbar-spacer"></div>
+        <label class="page-size-label">
+          Rows
+          <select id="page-size-select">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+          </select>
+        </label>
+        <button class="btn-ghost" id="export-csv-btn" title="Download currently filtered alerts as CSV">⬇ Export CSV</button>
+      </div>
+
+      <div id="alerts-table-wrap"></div>
+      <div class="pagination" id="pagination"></div>
+    </section>
+  </div>
+
+  <!-- ---------------------------------------------------- Insights tab -->
+  <div class="tab-panel hidden" data-panel="insights">
+    <section id="drilldown-section" class="card hidden">
+      <div class="card-head">
+        <div>
+          <button class="btn-ghost btn-back" id="back-to-alerts-btn">← Back to alerts</button>
+        </div>
+      </div>
+      <div class="card-head">
+        <h2 class="card-title">🔍 <span id="drill-sku">—</span></h2>
+        <div class="filter-field">
+          <label for="sku-select">Jump to SKU</label>
+          <select id="sku-select"></select>
+        </div>
+      </div>
+      <div class="card-subtitle" id="drill-reason"></div>
+      <div class="stat-row" id="drill-stats"></div>
+      <div class="chart-block" id="chart-block"></div>
+      <p class="chart-note">
+        Notice the orange sales bars drop to zero and stay there, while the blue system-stock
+        line stays flat or high — that gap is the phantom stock-out.
+      </p>
+    </section>
+    <section id="insights-empty" class="card empty-state hidden">
+      <p>Pick an alert from the Alerts tab to inspect its sales-vs-stock history here.</p>
+    </section>
+  </div>
+
+  <!-- ------------------------------------------------------ Impact tab -->
+  <div class="tab-panel hidden" data-panel="impact">
+    <section id="rupee-section" class="card hidden">
+      <h2 class="card-title">💰 Estimated Annual ₹ Recovered (All Stores)</h2>
+      <button class="btn-ghost" id="recompute-btn">Recompute live across all stores (~3-4 min)</button>
+      <div id="rupee-note" class="muted-text" style="margin-top:8px;"></div>
+      <div class="kpi-row" id="rupee-kpis" style="margin-top:16px;"></div>
+      <details class="arithmetic" id="arithmetic-details" open>
+        <summary>Show the arithmetic</summary>
+        <div id="arithmetic-body"></div>
+      </details>
+    </section>
+
+    <section id="upload-rough-section" class="card hidden">
+      <h2 class="card-title">💰 Estimated value at risk</h2>
+      <p class="muted-text">
+        ₹-recovered estimation against ground truth is only available for the synthetic demo
+        dataset (a real upload has no hidden labels to validate against). The alert list above
+        still works the same way on your real data.
+      </p>
+    </section>
+  </div>
+
+</main>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
