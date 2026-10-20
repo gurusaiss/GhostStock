@@ -9,161 +9,253 @@
 </head>
 <body>
 
-<header class="topbar">
-  <div class="brand">
-    <svg class="brand-mark" width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
-      <path d="M13 2 C7 2 3 6.5 3 12.5 V22 l3.2-2.6L9 22l3-2.6L15 22l2.8-2.6L21 22V12.5C21 6.5 17.4 2 13 2Z"
-            fill="none" stroke="var(--series-1)" stroke-width="1.6"/>
-      <circle cx="9.3" cy="11.5" r="1.4" fill="var(--series-1)"/>
-      <circle cx="16.7" cy="11.5" r="1.4" fill="var(--series-1)"/>
-    </svg>
-    <div class="brand-text">
-      <div class="brand-name">GhostStock</div>
-      <div class="brand-sub">phantom stock-out detection</div>
-    </div>
-  </div>
-  <div class="source-toggle" role="tablist" aria-label="Data source">
-    <button class="seg-btn active" data-source="synthetic" role="tab" aria-selected="true">Synthetic demo</button>
-    <button class="seg-btn" data-source="upload" role="tab" aria-selected="false">Upload real CSV</button>
-  </div>
-</header>
+<div class="app-shell">
 
-<main class="shell">
-
-  <p class="lede">
-    System inventory says a SKU is in stock. But it hasn't sold in weeks. Either nobody wants it
-    — or it isn't really there anymore. GhostStock finds the SKUs worth a manager's 5-minute aisle check.
-  </p>
-
-  <section id="upload-panel" class="card upload-card hidden">
-    <h2 class="card-title">Upload retailer CSV</h2>
-    <p class="muted-text">
-      Flexible column names accepted: <code>sku</code>/<code>sku_code</code>/<code>item_code</code>,
-      <code>store</code>/<code>store_id</code>, <code>date</code>, <code>qty_sold</code>/<code>units_sold</code>,
-      <code>qty_on_hand</code>/<code>stock_on_hand</code>.
-    </p>
-    <label class="dropzone" id="dropzone">
-      <input type="file" id="file-input" accept=".csv" hidden />
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M12 16V4M12 4 7 9M12 4l5 5" stroke="var(--muted-ink)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" stroke="var(--muted-ink)" stroke-width="1.6" stroke-linecap="round"/>
+  <!-- ============================================================ sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <svg class="brand-mark" width="24" height="24" viewBox="0 0 26 26" aria-hidden="true">
+        <path d="M13 2 C7 2 3 6.5 3 12.5 V22 l3.2-2.6L9 22l3-2.6L15 22l2.8-2.6L21 22V12.5C21 6.5 17.4 2 13 2Z"
+              fill="none" stroke="var(--series-1)" stroke-width="1.6"/>
+        <circle cx="9.3" cy="11.5" r="1.4" fill="var(--series-1)"/>
+        <circle cx="16.7" cy="11.5" r="1.4" fill="var(--series-1)"/>
       </svg>
-      <span>Drop a CSV here or click to browse</span>
-    </label>
-    <div id="upload-status" class="upload-status"></div>
-  </section>
-
-  <section id="filter-row" class="filter-row hidden">
-    <div class="filter-field">
-      <label for="store-select">Store</label>
-      <select id="store-select"></select>
-    </div>
-    <div class="filter-field filter-field-grow">
-      <label for="date-select">Date (as-of)</label>
-      <input type="range" id="date-slider" min="0" max="0" value="0" />
-      <div class="date-readout" id="date-readout">—</div>
-    </div>
-    <button class="btn-ghost" id="latest-btn" title="Jump to the most recent date">Latest</button>
-  </section>
-
-  <section id="empty-state" class="card empty-state hidden">
-    <p>Upload a CSV above to analyze your own store data, or switch back to the synthetic demo dataset.</p>
-  </section>
-
-  <!-- -------------------------------------------------------- tab nav -->
-  <nav class="tabs hidden" id="tabs" role="tablist">
-    <button class="tab-btn active" data-tab="alerts" role="tab" aria-selected="true">📋 Alerts</button>
-    <button class="tab-btn" data-tab="insights" role="tab" aria-selected="false">📈 Insights</button>
-    <button class="tab-btn" data-tab="impact" role="tab" aria-selected="false">💰 Impact</button>
-  </nav>
-
-  <!-- ------------------------------------------------------ Alerts tab -->
-  <div class="tab-panel" data-panel="alerts">
-
-    <section id="kpi-row" class="kpi-row hidden"></section>
-
-    <section id="alerts-section" class="card hidden">
-      <div class="card-head">
-        <h2 class="card-title">Today's Top-<span id="top-n">20</span> Alerts</h2>
-        <div class="card-subtitle" id="alerts-subtitle"></div>
+      <div class="brand-text">
+        <div class="brand-name">GhostStock</div>
+        <div class="brand-sub">phantom stock-out detection</div>
       </div>
+    </div>
 
-      <div class="toolbar">
-        <input type="search" id="sku-search" class="search-input" placeholder="Search SKU…" />
-        <div class="chip-group" id="severity-filter">
-          <button class="chip active" data-severity="all">All</button>
-          <button class="chip chip-critical" data-severity="high">High</button>
-          <button class="chip chip-warning" data-severity="medium">Medium</button>
-          <button class="chip chip-muted" data-severity="low">Low</button>
-        </div>
-        <div class="toolbar-spacer"></div>
-        <label class="page-size-label">
-          Rows
-          <select id="page-size-select">
-            <option value="10">10</option>
-            <option value="20" selected>20</option>
-          </select>
+    <nav class="side-nav" id="side-nav">
+      <button class="nav-item active" data-tab="alerts" title="Alerts">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.7 21a2 2 0 0 1-3.4 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span>Alerts</span>
+      </button>
+      <button class="nav-item" data-tab="insights" title="Insights">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3 17l6-6 4 4 8-8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 7h6v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Insights</span>
+      </button>
+      <button class="nav-item" data-tab="impact" title="Impact">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="2.5" y="6" width="19" height="12" rx="2" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.7"/></svg>
+        <span>Impact</span>
+      </button>
+      <button class="nav-item hidden" data-tab="users" id="nav-users" title="Users">
+        <svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="1.7"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="17.5" cy="9" r="2.4" stroke="currentColor" stroke-width="1.5"/><path d="M15.5 14.2c2.6.3 4.5 2.3 4.8 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span>Users</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Data source</div>
+      <div class="source-toggle source-toggle-vert" role="tablist" aria-label="Data source">
+        <button class="seg-btn active" data-source="synthetic" role="tab" aria-selected="true">Synthetic demo</button>
+        <button class="seg-btn" data-source="upload" role="tab" aria-selected="false">Upload real CSV</button>
+      </div>
+    </div>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="user-card">
+      <div class="user-avatar" id="user-avatar">?</div>
+      <div class="user-meta">
+        <div class="user-email" id="user-email">—</div>
+        <div class="user-role-badge" id="user-role-badge">—</div>
+      </div>
+      <button class="icon-btn" id="logout-btn" title="Log out">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l5-5-5-5M21 12H9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ============================================================ main -->
+  <div class="main-col">
+    <main class="shell">
+
+      <p class="lede">
+        System inventory says a SKU is in stock. But it hasn't sold in weeks. Either nobody wants it
+        — or it isn't really there anymore. GhostStock finds the SKUs worth a manager's 5-minute aisle check.
+      </p>
+
+      <section id="upload-panel" class="card upload-card hidden">
+        <h2 class="card-title">Upload retailer CSV</h2>
+        <p class="muted-text">
+          Flexible column names accepted: <code>sku</code>/<code>sku_code</code>/<code>item_code</code>,
+          <code>store</code>/<code>store_id</code>, <code>date</code>, <code>qty_sold</code>/<code>units_sold</code>,
+          <code>qty_on_hand</code>/<code>stock_on_hand</code>.
+        </p>
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept=".csv" hidden />
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 16V4M12 4 7 9M12 4l5 5" stroke="var(--muted-ink)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" stroke="var(--muted-ink)" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <span>Drop a CSV here or click to browse</span>
         </label>
-        <button class="btn-ghost" id="export-csv-btn" title="Download currently filtered alerts as CSV">⬇ Export CSV</button>
-      </div>
+        <div id="upload-status" class="upload-status"></div>
+      </section>
 
-      <div id="alerts-table-wrap"></div>
-      <div class="pagination" id="pagination"></div>
-    </section>
-  </div>
-
-  <!-- ---------------------------------------------------- Insights tab -->
-  <div class="tab-panel hidden" data-panel="insights">
-    <section id="drilldown-section" class="card hidden">
-      <div class="card-head">
-        <div>
-          <button class="btn-ghost btn-back" id="back-to-alerts-btn">← Back to alerts</button>
-        </div>
-      </div>
-      <div class="card-head">
-        <h2 class="card-title">🔍 <span id="drill-sku">—</span></h2>
+      <section id="filter-row" class="filter-row hidden">
         <div class="filter-field">
-          <label for="sku-select">Jump to SKU</label>
-          <select id="sku-select"></select>
+          <label for="store-select">Store</label>
+          <select id="store-select"></select>
+        </div>
+        <div class="filter-field filter-field-grow">
+          <label for="date-select">Date (as-of)</label>
+          <input type="range" id="date-slider" min="0" max="0" value="0" />
+          <div class="date-readout" id="date-readout">—</div>
+        </div>
+        <button class="btn-ghost" id="latest-btn" title="Jump to the most recent date">Latest</button>
+      </section>
+
+      <section id="empty-state" class="card empty-state hidden">
+        <p>Upload a CSV above to analyze your own store data, or switch back to the synthetic demo dataset.</p>
+      </section>
+
+      <!-- -------------------------------------------------------- Alerts -->
+      <div class="tab-panel" data-panel="alerts">
+        <section id="kpi-row" class="kpi-row hidden"></section>
+
+        <section id="alerts-section" class="card hidden">
+          <div class="card-head">
+            <h2 class="card-title">Today's Top-<span id="top-n">20</span> Alerts</h2>
+            <div class="card-subtitle" id="alerts-subtitle"></div>
+          </div>
+
+          <div class="toolbar">
+            <input type="search" id="sku-search" class="search-input" placeholder="Search SKU…" />
+            <div class="chip-group" id="severity-filter">
+              <button class="chip active" data-severity="all">All</button>
+              <button class="chip chip-critical" data-severity="high">High</button>
+              <button class="chip chip-warning" data-severity="medium">Medium</button>
+              <button class="chip chip-muted" data-severity="low">Low</button>
+            </div>
+            <div class="toolbar-spacer"></div>
+            <label class="page-size-label">
+              Rows
+              <select id="page-size-select">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+              </select>
+            </label>
+            <button class="btn-ghost" id="export-csv-btn" title="Download currently filtered alerts as CSV">
+              <svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Export CSV
+            </button>
+          </div>
+
+          <div id="alerts-table-wrap"></div>
+          <div class="pagination" id="pagination"></div>
+        </section>
+      </div>
+
+      <!-- ------------------------------------------------------ Insights -->
+      <div class="tab-panel hidden" data-panel="insights">
+        <section id="drilldown-section" class="card hidden">
+          <div class="card-head">
+            <button class="btn-ghost btn-back" id="back-to-alerts-btn">
+              <svg viewBox="0 0 24 24" fill="none" width="14" height="14"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Back to alerts
+            </button>
+          </div>
+          <div class="card-head">
+            <h2 class="card-title" id="drill-sku">—</h2>
+            <div class="filter-field">
+              <label for="sku-select">Jump to SKU</label>
+              <select id="sku-select"></select>
+            </div>
+          </div>
+          <div class="card-subtitle" id="drill-reason"></div>
+          <div class="stat-row" id="drill-stats"></div>
+          <div class="chart-block" id="chart-block"></div>
+          <p class="chart-note">
+            Notice the orange sales bars drop to zero and stay there, while the blue system-stock
+            line stays flat or high — that gap is the phantom stock-out.
+          </p>
+        </section>
+        <section id="insights-empty" class="card empty-state hidden">
+          <p>Pick an alert from the Alerts tab to inspect its sales-vs-stock history here.</p>
+        </section>
+      </div>
+
+      <!-- -------------------------------------------------------- Impact -->
+      <div class="tab-panel hidden" data-panel="impact">
+        <section id="rupee-section" class="card hidden">
+          <h2 class="card-title">Estimated Annual ₹ Recovered (All Stores)</h2>
+          <button class="btn-ghost" id="recompute-btn">Recompute live across all stores (~3-4 min)</button>
+          <div id="rupee-note" class="muted-text" style="margin-top:8px;"></div>
+          <div class="kpi-row" id="rupee-kpis" style="margin-top:16px;"></div>
+          <details class="arithmetic" id="arithmetic-details" open>
+            <summary>Show the arithmetic</summary>
+            <div id="arithmetic-body"></div>
+          </details>
+        </section>
+
+        <section id="upload-rough-section" class="card hidden">
+          <h2 class="card-title">Estimated value at risk</h2>
+          <p class="muted-text">
+            ₹-recovered estimation against ground truth is only available for the synthetic demo
+            dataset (a real upload has no hidden labels to validate against). The alert list above
+            still works the same way on your real data.
+          </p>
+        </section>
+      </div>
+
+      <!-- --------------------------------------------------------- Users -->
+      <div class="tab-panel hidden" data-panel="users">
+        <section class="card">
+          <div class="card-head">
+            <h2 class="card-title">Mall staff access</h2>
+            <button class="btn-primary" id="add-user-btn">+ Add user</button>
+          </div>
+          <p class="muted-text" style="margin:-6px 0 16px;">
+            Only an admin can create logins — there's no public sign-up. Give each store manager
+            an email and a temporary password here, and scope them to just the store(s) they run.
+          </p>
+          <div id="users-table-wrap"></div>
+        </section>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- ================================================================ modal -->
+<div class="modal-overlay hidden" id="user-modal-overlay">
+  <div class="modal" id="user-modal">
+    <div class="modal-head">
+      <h3>Add a user</h3>
+      <button class="icon-btn" id="modal-close-btn">
+        <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <form id="user-form">
+      <div class="login-field">
+        <label for="new-email">Email</label>
+        <input type="email" id="new-email" required />
+      </div>
+      <div class="login-field">
+        <label for="new-password">Temporary password</label>
+        <div class="password-row">
+          <input type="text" id="new-password" required minlength="8" />
+          <button type="button" class="btn-ghost" id="gen-password-btn">Generate</button>
         </div>
       </div>
-      <div class="card-subtitle" id="drill-reason"></div>
-      <div class="stat-row" id="drill-stats"></div>
-      <div class="chart-block" id="chart-block"></div>
-      <p class="chart-note">
-        Notice the orange sales bars drop to zero and stay there, while the blue system-stock
-        line stays flat or high — that gap is the phantom stock-out.
-      </p>
-    </section>
-    <section id="insights-empty" class="card empty-state hidden">
-      <p>Pick an alert from the Alerts tab to inspect its sales-vs-stock history here.</p>
-    </section>
+      <div class="login-field">
+        <label for="new-role">Role</label>
+        <select id="new-role">
+          <option value="manager">Store manager</option>
+          <option value="admin">Admin (full access)</option>
+        </select>
+      </div>
+      <div class="login-field" id="store-scope-field">
+        <label>Store access</label>
+        <div class="store-checklist" id="store-checklist"></div>
+      </div>
+      <div class="modal-error" id="modal-error"></div>
+      <button type="submit" class="login-submit" id="user-form-submit">Create user</button>
+    </form>
   </div>
-
-  <!-- ------------------------------------------------------ Impact tab -->
-  <div class="tab-panel hidden" data-panel="impact">
-    <section id="rupee-section" class="card hidden">
-      <h2 class="card-title">💰 Estimated Annual ₹ Recovered (All Stores)</h2>
-      <button class="btn-ghost" id="recompute-btn">Recompute live across all stores (~3-4 min)</button>
-      <div id="rupee-note" class="muted-text" style="margin-top:8px;"></div>
-      <div class="kpi-row" id="rupee-kpis" style="margin-top:16px;"></div>
-      <details class="arithmetic" id="arithmetic-details" open>
-        <summary>Show the arithmetic</summary>
-        <div id="arithmetic-body"></div>
-      </details>
-    </section>
-
-    <section id="upload-rough-section" class="card hidden">
-      <h2 class="card-title">💰 Estimated value at risk</h2>
-      <p class="muted-text">
-        ₹-recovered estimation against ground truth is only available for the synthetic demo
-        dataset (a real upload has no hidden labels to validate against). The alert list above
-        still works the same way on your real data.
-      </p>
-    </section>
-  </div>
-
-</main>
+</div>
 
 <div id="toast" class="toast hidden"></div>
 

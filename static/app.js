@@ -53,6 +53,10 @@ function toast(msg, isErr) {
 
 async function api(path, opts) {
   const res = await fetch(API + path, opts);
+  if (res.status === 401) {
+    window.location.href = "/login.html";
+    throw new Error("Not authenticated");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || res.statusText);
@@ -60,9 +64,35 @@ async function api(path, opts) {
   return res.json();
 }
 
+// -------------------------------------------------------------------- auth
+
+let currentUser = null;
+
+async function bootstrapAuth() {
+  const res = await fetch("/api/auth/me");
+  if (!res.ok) {
+    window.location.href = "/login.html";
+    return false;
+  }
+  currentUser = await res.json();
+  el("#user-email").textContent = currentUser.email;
+  el("#user-role-badge").textContent = currentUser.role === "admin" ? "Admin" : "Store manager";
+  el("#user-avatar").textContent = currentUser.email.slice(0, 1);
+  el("#nav-users").classList.toggle("hidden", currentUser.role !== "admin");
+  el("#logout-btn").addEventListener("click", async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login.html";
+  });
+  return true;
+}
+
 // ------------------------------------------------------------------ init
 
 async function init() {
+  const ok = await bootstrapAuth();
+  if (!ok) return;
+  setupUsersPanel();
+
   el("#latest-btn").addEventListener("click", () => {
     state.dateIdx = state.dates.length - 1;
     el("#date-slider").value = state.dateIdx;
@@ -84,7 +114,7 @@ async function init() {
   document.querySelectorAll(".seg-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchSource(btn.dataset.source));
   });
-  document.querySelectorAll(".tab-btn").forEach((btn) => {
+  document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
 
@@ -118,8 +148,9 @@ function switchTab(tab) {
     el("#drilldown-section").classList.add("hidden");
     el("#insights-empty").classList.remove("hidden");
   }
+  if (tab === "users") loadUsers();
   state.tab = tab;
-  document.querySelectorAll(".tab-btn").forEach((b) => {
+  document.querySelectorAll(".nav-item").forEach((b) => {
     const active = b.dataset.tab === tab;
     b.classList.toggle("active", active);
     b.setAttribute("aria-selected", active);
@@ -127,6 +158,10 @@ function switchTab(tab) {
   document.querySelectorAll(".tab-panel").forEach((p) => {
     p.classList.toggle("hidden", p.dataset.panel !== tab);
   });
+  // "Users" and "Impact" aren't scoped by store/date — hide the filter there
+  // so it doesn't imply it affects numbers that are actually chain-wide.
+  const hasData = !!state.meta;
+  el("#filter-row").classList.toggle("hidden", tab === "users" || tab === "impact" || !hasData);
 }
 
 async function switchSource(source) {
@@ -160,10 +195,9 @@ async function loadSourceData() {
     slider.value = state.dateIdx;
     updateDateReadout();
 
-    el("#tabs").classList.remove("hidden");
     el("#filter-row").classList.remove("hidden");
     el("#alerts-section").classList.remove("hidden");
-    switchTab("alerts");
+    switchTab(state.tab === "users" ? "users" : "alerts");
 
     if (state.source === "synthetic") {
       el("#rupee-section").classList.remove("hidden");
@@ -182,7 +216,6 @@ async function loadSourceData() {
 
 function showEmptyState(show) {
   el("#empty-state").classList.toggle("hidden", !show);
-  el("#tabs").classList.toggle("hidden", show);
   el("#filter-row").classList.toggle("hidden", show);
   el("#kpi-row").classList.toggle("hidden", show);
   el("#alerts-section").classList.toggle("hidden", show);
@@ -647,8 +680,8 @@ function renderSummary(s) {
     return;
   }
   el("#rupee-note").textContent = s.precomputed
-    ? "📌 Precomputed by evaluate.py (click the button above to re-run live)."
-    : "✅ Freshly recomputed live.";
+    ? "Precomputed by evaluate.py — click the button above to re-run live."
+    : "Freshly recomputed live.";
 
   const kpis = [
     { label: "Confirmed phantom cases caught", value: `${s.n_confirmed} / ${s.n_ground_truth_cases}` },
@@ -736,6 +769,168 @@ async function handleFile(file) {
   } catch (e) {
     statusEl.textContent = e.message;
     statusEl.className = "upload-status err";
+  }
+}
+
+// -------------------------------------------------------------- admin: users
+
+function setupUsersPanel() {
+  if (currentUser.role !== "admin") return;
+
+  el("#add-user-btn").addEventListener("click", openUserModal);
+  el("#modal-close-btn").addEventListener("click", closeUserModal);
+  el("#user-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "user-modal-overlay") closeUserModal();
+  });
+  el("#new-role").addEventListener("change", (e) => {
+    el("#store-scope-field").classList.toggle("hidden", e.target.value === "admin");
+  });
+  el("#gen-password-btn").addEventListener("click", async () => {
+    try {
+      const { password } = await api("/api/admin/generate_password", { method: "POST" });
+      el("#new-password").value = password;
+    } catch (e) {
+      toast(e.message, true);
+    }
+  });
+  el("#user-form").addEventListener("submit", submitNewUser);
+}
+
+function openUserModal() {
+  el("#user-form").reset();
+  el("#modal-error").classList.remove("show");
+  el("#store-scope-field").classList.remove("hidden");
+  // unchecked by default: scoping a manager to specific stores only works if
+  // the admin has to deliberately opt stores in, not uncheck the ones to exclude
+  const stores = (state.meta && state.meta.stores) || [];
+  el("#store-checklist").innerHTML = stores
+    .map((s) => `<label class="store-check-item"><input type="checkbox" value="${s}"> ${s}</label>`)
+    .join("");
+  el("#user-modal-overlay").classList.remove("hidden");
+}
+
+function closeUserModal() {
+  el("#user-modal-overlay").classList.add("hidden");
+}
+
+async function submitNewUser(e) {
+  e.preventDefault();
+  const email = el("#new-email").value.trim();
+  const password = el("#new-password").value;
+  const role = el("#new-role").value;
+  let storeIds = "ALL";
+  if (role !== "admin") {
+    const checked = Array.from(document.querySelectorAll("#store-checklist input:checked")).map((i) => i.value);
+    if (!checked.length) {
+      showModalError("Pick at least one store for a manager account (or make them an admin instead).");
+      return;
+    }
+    storeIds = checked.join(",");
+  }
+  const btn = el("#user-form-submit");
+  btn.disabled = true;
+  btn.textContent = "Creating…";
+  try {
+    await api("/api/admin/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, role, store_ids: storeIds }),
+    });
+    closeUserModal();
+    toast(`User ${email} created.`);
+    loadUsers();
+  } catch (e) {
+    showModalError(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Create user";
+  }
+}
+
+function showModalError(msg) {
+  const box = el("#modal-error");
+  box.textContent = msg;
+  box.classList.add("show");
+}
+
+async function loadUsers() {
+  if (currentUser.role !== "admin") return;
+  try {
+    const users = await api("/api/admin/users");
+    renderUsersTable(users);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderUsersTable(users) {
+  const wrap = el("#users-table-wrap");
+  if (!users.length) {
+    wrap.innerHTML = `<p class="muted-text">No users yet.</p>`;
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "users-table";
+  table.innerHTML = `<thead><tr><th>Email</th><th>Role</th><th>Store access</th><th>Added</th><th></th></tr></thead>`;
+  const tbody = document.createElement("tbody");
+  users.forEach((u) => {
+    const tr = document.createElement("tr");
+    const scope = u.store_ids === "ALL" ? "All stores" : u.store_ids.split(",").join(", ");
+    const added = new Date(u.created_at * 1000).toLocaleDateString();
+    const emailCell = document.createElement("td");
+    emailCell.textContent = u.email;
+    const roleCell = document.createElement("td");
+    roleCell.innerHTML = `<span class="role-pill ${u.role}">${u.role === "admin" ? "Admin" : "Manager"}</span>`;
+    const scopeCell = document.createElement("td");
+    scopeCell.className = "store-scope-text";
+    scopeCell.textContent = scope;
+    const addedCell = document.createElement("td");
+    addedCell.className = "store-scope-text";
+    addedCell.textContent = added;
+    const actionsCell = document.createElement("td");
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "view-btn";
+    resetBtn.textContent = "Reset password";
+    resetBtn.style.marginRight = "6px";
+    resetBtn.addEventListener("click", () => resetUserPassword(u));
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn-danger-text";
+    delBtn.textContent = "Remove";
+    delBtn.addEventListener("click", () => removeUser(u));
+    actionsCell.appendChild(resetBtn);
+    actionsCell.appendChild(delBtn);
+
+    tr.append(emailCell, roleCell, scopeCell, addedCell, actionsCell);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.innerHTML = "";
+  wrap.appendChild(table);
+}
+
+async function resetUserPassword(u) {
+  const pwd = window.prompt(`New password for ${u.email} (min 8 characters):`);
+  if (!pwd) return;
+  try {
+    await api(`/api/admin/users/${u.id}/reset_password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pwd }),
+    });
+    toast(`Password reset for ${u.email}. Share it with them directly.`);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function removeUser(u) {
+  if (!window.confirm(`Remove ${u.email}? They won't be able to log in again (an already-open session stays valid until it expires).`)) return;
+  try {
+    await api(`/api/admin/users/${u.id}`, { method: "DELETE" });
+    toast(`${u.email} removed.`);
+    loadUsers();
+  } catch (e) {
+    toast(e.message, true);
   }
 }
 

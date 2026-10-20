@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sign in — GhostStock</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 26 26%22><path d=%22M13 2C7 2 3 6.5 3 12.5V22l3.2-2.6L9 22l3-2.6L15 22l2.8-2.6L21 22V12.5C21 6.5 17.4 2 13 2Z%22 fill=%22none%22 stroke=%22%233987e5%22 stroke-width=%221.8%22/><circle cx=%229.3%22 cy=%2211.5%22 r=%221.6%22 fill=%22%233987e5%22/><circle cx=%2216.7%22 cy=%2211.5%22 r=%221.6%22 fill=%22%233987e5%22/></svg>" />
+<link rel="stylesheet" href="styles.css" />
+<style>
+  body.login-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 20% 20%, rgba(57,135,229,0.10), transparent 40%),
+      radial-gradient(circle at 80% 80%, rgba(217,89,38,0.08), transparent 40%),
+      var(--page-plane);
+  }
+  .login-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface-1);
+    border: 1px solid var(--border-hair);
+    border-radius: var(--radius-lg);
+    padding: 36px 32px 28px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  }
+  .login-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 26px;
+  }
+  .login-brand .brand-name { font-size: 20px; font-weight: 700; }
+  .login-brand .brand-sub { font-size: 13px; color: var(--muted-ink); text-align: center; }
+  .login-field { margin-bottom: 16px; }
+  .login-field label {
+    display: block;
+    font-size: 12.5px;
+    color: var(--muted-ink);
+    margin-bottom: 6px;
+  }
+  .login-field input {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border-hair);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 14px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+  }
+  .login-field input:focus {
+    outline: none;
+    border-color: var(--series-1);
+  }
+  .login-submit {
+    width: 100%;
+    background: var(--series-1);
+    color: #fff;
+    border: none;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 650;
+    padding: 11px 0;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    margin-top: 6px;
+    transition: opacity 0.15s;
+  }
+  .login-submit:hover { opacity: 0.92; }
+  .login-submit:disabled { opacity: 0.5; cursor: wait; }
+  .login-error {
+    background: rgba(230,103,103,0.12);
+    color: var(--status-critical);
+    border: 1px solid rgba(230,103,103,0.3);
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .login-error.show { display: block; }
+  .login-footnote {
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted-ink);
+    margin-top: 20px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body class="login-body">
+
+<div class="login-card">
+  <div class="login-brand">
+    <svg width="34" height="34" viewBox="0 0 26 26" aria-hidden="true">
+      <path d="M13 2 C7 2 3 6.5 3 12.5 V22 l3.2-2.6L9 22l3-2.6L15 22l2.8-2.6L21 22V12.5C21 6.5 17.4 2 13 2Z"
+            fill="none" stroke="var(--series-1)" stroke-width="1.6"/>
+      <circle cx="9.3" cy="11.5" r="1.4" fill="var(--series-1)"/>
+      <circle cx="16.7" cy="11.5" r="1.4" fill="var(--series-1)"/>
+    </svg>
+    <div class="brand-name">GhostStock</div>
+    <div class="brand-sub">Sign in with the account your mall admin set up for you.</div>
+  </div>
+
+  <div class="login-error" id="login-error"></div>
+
+  <form id="login-form" autocomplete="on">
+    <div class="login-field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" autocomplete="username" required />
+    </div>
+    <div class="login-field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required />
+    </div>
+    <button type="submit" class="login-submit" id="login-btn">Sign in</button>
+  </form>
+
+  <div class="login-footnote">
+    No self-signup — access is granted by your mall's GhostStock admin.<br>
+    Don't have a login yet? Ask your admin to add you from the Users panel.
+  </div>
+</div>
+
+<script>
+  const form = document.getElementById("login-form");
+  const errorBox = document.getElementById("login-error");
+  const btn = document.getElementById("login-btn");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorBox.classList.remove("show");
+    btn.disabled = true;
+    btn.textContent = "Signing in…";
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: document.getElementById("email").value,
+          password: document.getElementById("password").value,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "Sign in failed.");
+      window.location.href = "/";
+    } catch (err) {
+      errorBox.textContent = err.message;
+      errorBox.classList.add("show");
+      btn.disabled = false;
+      btn.textContent = "Sign in";
+    }
+  });
+</script>
+</body>
+</html>

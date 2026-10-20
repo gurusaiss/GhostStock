@@ -5,21 +5,31 @@ Wraps the existing detection engine (detector.py, evaluate.py, generate_data.py,
 load_real_data.py are all untouched) behind a small JSON API, and serves the
 hand-built dashboard in static/.
 
+Access model: there is no public signup. The mall's admin account (seeded on
+first run — see the console output) creates a login for every store manager
+who needs access, optionally scoped to just the store(s) they run. See
+auth.py for the full reasoning.
+
 Run:
     python server.py
-Then open http://localhost:8000
+Then open http://localhost:8000 — the console prints the default admin
+login the very first time the database is created.
 """
 
 import io
 import json
+import secrets
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+import auth
 from data_io import load_synthetic, load_ground_truth, normalize_uploaded
 from load_real_data import load_real_csv
 from detector import (
@@ -31,18 +41,19 @@ from detector import (
 
 APP_DIR = Path(__file__).parent
 EVAL_SUMMARY_PATH = APP_DIR / "data" / "eval_summary.json"
+SESSION_COOKIE = "gs_session"
 
 app = FastAPI(title="GhostStock API")
 
 # ----------------------------------------------------------------------------
-# Dataset state — loaded once at startup; an uploaded CSV lives alongside it
-# and either can be selected per-request via ?source=synthetic|upload.
-# This mirrors a single local demo user, not a multi-tenant service.
+# Dataset state — the synthetic set loads once at startup; an uploaded CSV is
+# kept per logged-in user (keyed by user id) so two managers uploading
+# different files don't clobber each other.
 # ----------------------------------------------------------------------------
 
 _state = {
-    "synthetic": None,   # (sales_df, stores_df, sku_master_df)
-    "upload": None,      # (sales_df, filename)
+    "synthetic": None,     # (sales_df, stores_df, sku_master_df)
+    "uploads": {},          # user_id -> (sales_df, filename)
 }
 
 
@@ -52,11 +63,12 @@ def _load_synthetic_once():
     return _state["synthetic"]
 
 
-def _get_dataset(source: str):
+def _get_dataset(source: str, user: dict):
     if source == "upload":
-        if _state["upload"] is None:
+        entry = _state["uploads"].get(user["user_id"])
+        if entry is None:
             raise HTTPException(400, "No CSV has been uploaded yet.")
-        return _state["upload"][0]
+        return entry[0]
     try:
         sales, _, _ = _load_synthetic_once()
     except FileNotFoundError:
@@ -82,16 +94,133 @@ def _df_to_native(df: pd.DataFrame) -> list:
 
 
 # ----------------------------------------------------------------------------
-# API
+# Auth dependencies & endpoints
+# ----------------------------------------------------------------------------
+
+
+def current_user(gs_session: Optional[str] = Cookie(default=None)) -> dict:
+    sess = auth.get_session(gs_session)
+    if not sess:
+        raise HTTPException(401, "Not authenticated")
+    return sess
+
+
+def require_admin(user: dict = Depends(current_user)) -> dict:
+    if user["role"] != "admin":
+        raise HTTPException(403, "Admin access required")
+    return user
+
+
+def _store_scope(user: dict, all_stores: list) -> list:
+    """Stores this user is allowed to see, in the order the dataset gives them."""
+    return auth.allowed_stores(user, all_stores)
+
+
+def _assert_store_allowed(user: dict, store: str, all_stores: list):
+    if store not in _store_scope(user, all_stores):
+        raise HTTPException(403, f"You don't have access to store {store}.")
+
+
+class LoginPayload(BaseModel):
+    email: str
+    password: str
+
+
+class NewUserPayload(BaseModel):
+    email: str
+    password: str
+    role: str  # "admin" | "manager"
+    store_ids: str = "ALL"  # "ALL" or comma-separated store ids
+
+
+class ResetPasswordPayload(BaseModel):
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginPayload, response: Response):
+    user = auth.verify_login(payload.email, payload.password)
+    if not user:
+        raise HTTPException(401, "Incorrect email or password.")
+    token = auth.create_session(user)
+    response.set_cookie(
+        SESSION_COOKIE, token, httponly=True, samesite="lax",
+        max_age=auth.SESSION_TTL_SECONDS,
+    )
+    return {"email": user["email"], "role": user["role"]}
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response, gs_session: Optional[str] = Cookie(default=None)):
+    auth.destroy_session(gs_session)
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(user: dict = Depends(current_user)):
+    return {"email": user["email"], "role": user["role"]}
+
+
+# ----------------------------------------------------------------------------
+# Admin: user management (the only way new logins get created — no signup)
+# ----------------------------------------------------------------------------
+
+
+@app.get("/api/admin/users")
+def admin_list_users(admin: dict = Depends(require_admin)):
+    return auth.list_users()
+
+
+@app.post("/api/admin/users")
+def admin_create_user(payload: NewUserPayload, admin: dict = Depends(require_admin)):
+    try:
+        auth.create_user(payload.email, payload.password, payload.role, payload.store_ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            raise HTTPException(400, "A user with that email already exists.")
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/admin/users/{user_id}/reset_password")
+def admin_reset_password(user_id: int, payload: ResetPasswordPayload, admin: dict = Depends(require_admin)):
+    try:
+        auth.reset_password(user_id, payload.password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: int, admin: dict = Depends(require_admin)):
+    try:
+        auth.delete_user(user_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/admin/generate_password")
+def admin_generate_password(admin: dict = Depends(require_admin)):
+    return {"password": secrets.token_urlsafe(9)}
+
+
+# ----------------------------------------------------------------------------
+# Data API (all gated behind a valid session; store access scoped by role)
 # ----------------------------------------------------------------------------
 
 
 @app.get("/api/meta")
-def get_meta(source: str = "synthetic"):
-    sales = _get_dataset(source)
-    stores = sorted(sales["store_id"].unique().tolist())
+def get_meta(source: str = "synthetic", user: dict = Depends(current_user)):
+    sales = _get_dataset(source, user)
+    all_stores = sorted(sales["store_id"].unique().tolist())
+    stores = _store_scope(user, all_stores)
     dates = sales["date"].drop_duplicates().sort_values()
     min_eval_idx = max(1, int(len(dates) * 0.25))  # needs lookback history for a baseline
+    entry = _state["uploads"].get(user["user_id"])
     return {
         "source": source,
         "stores": stores,
@@ -102,13 +231,14 @@ def get_meta(source: str = "synthetic"):
         "dateMax": dates.iloc[-1].strftime("%Y-%m-%d"),
         "firstUsableDate": dates.iloc[min_eval_idx].strftime("%Y-%m-%d"),
         "allDates": [d.strftime("%Y-%m-%d") for d in dates.iloc[min_eval_idx:]],
-        "uploadFilename": _state["upload"][1] if (source == "upload" and _state["upload"]) else None,
+        "uploadFilename": entry[1] if (source == "upload" and entry) else None,
     }
 
 
 @app.get("/api/alerts")
-def get_alerts(store: str, date: str, source: str = "synthetic"):
-    sales = _get_dataset(source)
+def get_alerts(store: str, date: str, source: str = "synthetic", user: dict = Depends(current_user)):
+    sales = _get_dataset(source, user)
+    _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()))
     alerts = top_alerts_for_store_day(sales, store, date, top_n=TOP_N)
     if alerts.empty:
         return {"store": store, "date": date, "alerts": []}
@@ -116,8 +246,10 @@ def get_alerts(store: str, date: str, source: str = "synthetic"):
 
 
 @app.get("/api/chart")
-def get_chart(store: str, sku: str, date: str, source: str = "synthetic", days: int = 60):
-    sales = _get_dataset(source)
+def get_chart(store: str, sku: str, date: str, source: str = "synthetic", days: int = 60,
+              user: dict = Depends(current_user)):
+    sales = _get_dataset(source, user)
+    _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()))
     as_of = pd.Timestamp(date)
     hist = sales[
         (sales["store_id"] == store)
@@ -136,7 +268,7 @@ def get_chart(store: str, sku: str, date: str, source: str = "synthetic", days: 
 
 
 @app.get("/api/summary")
-def get_summary(source: str = "synthetic"):
+def get_summary(source: str = "synthetic", user: dict = Depends(current_user)):
     if source != "synthetic" or not EVAL_SUMMARY_PATH.exists():
         return {"available": False}
     with open(EVAL_SUMMARY_PATH) as f:
@@ -147,7 +279,7 @@ def get_summary(source: str = "synthetic"):
 
 
 @app.post("/api/summary/recompute")
-def recompute_summary():
+def recompute_summary(user: dict = Depends(current_user)):
     """Live re-run of the same scan evaluate.py does, across every ground-truth
     phantom case's end date. Slow (~3-4 min on the full synthetic dataset) —
     the frontend warns about this before calling it."""
@@ -197,7 +329,7 @@ def recompute_summary():
 
 
 @app.post("/api/upload")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(file: UploadFile = File(...), user: dict = Depends(current_user)):
     try:
         raw_bytes = await file.read()
         df = load_real_csv(io.BytesIO(raw_bytes))
@@ -206,7 +338,7 @@ async def upload_csv(file: UploadFile = File(...)):
         raise HTTPException(400, f"Could not parse this file: {e}")
     if df.empty:
         raise HTTPException(400, "No usable rows found in this file after cleaning.")
-    _state["upload"] = (df, file.filename)
+    _state["uploads"][user["user_id"]] = (df, file.filename)
     return {
         "filename": file.filename,
         "nRows": int(len(df)),
@@ -216,7 +348,9 @@ async def upload_csv(file: UploadFile = File(...)):
 
 
 # ----------------------------------------------------------------------------
-# Static dashboard
+# Static dashboard — index.html itself is public (it's an inert shell without
+# a session; every data call behind it is gated above), login.html is always
+# public.
 # ----------------------------------------------------------------------------
 
 STATIC_DIR = APP_DIR / "static"
@@ -233,5 +367,16 @@ app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")
 if __name__ == "__main__":
     import uvicorn
 
+    seeded = auth.init_db()
+    print("=" * 60)
     print("GhostStock running at http://localhost:8000")
+    if seeded:
+        email, password = seeded
+        print("First run — an admin account was created:")
+        print(f"  Email:    {email}")
+        print(f"  Password: {password}")
+        print("Log in with this, then create accounts for mall staff from")
+        print("the Users panel. Set GHOSTSTOCK_ADMIN_EMAIL / "
+              "GHOSTSTOCK_ADMIN_PASSWORD env vars to pin these instead.")
+    print("=" * 60)
     uvicorn.run(app, host="0.0.0.0", port=8000)

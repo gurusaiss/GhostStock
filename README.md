@@ -22,7 +22,8 @@ no internet connection at all.
 | `detector.py` | The detection engine: streak detection, each SKU's own velocity baseline, promo suppression, Poisson-implausibility scoring + an IsolationForest cross-check. Hard-capped at 20 alerts per store-day. |
 | `evaluate.py` | Scores the detector against the hidden `ground_truth.csv`: precision@20, recall, and an estimated annual ₹ recovered, with arithmetic printed step by step. Also writes `data/eval_summary.json` so the dashboard loads instantly instead of re-running a multi-minute scan. |
 | `server.py` | FastAPI backend — a thin JSON API over the detection engine, plus serves the dashboard. |
-| `static/` | The dashboard itself: `index.html`, `styles.css`, `app.js`. Vanilla JS, hand-built SVG charts, no build step, no npm, no CDN script tags. |
+| `auth.py` | Admin-provisioned accounts: SQLite-backed users table, PBKDF2 password hashing, cookie sessions. No public signup — see "Access & accounts" below. |
+| `static/` | The dashboard itself: `index.html` (app shell), `login.html`, `styles.css`, `app.js`. Vanilla JS, hand-built SVG charts, no build step, no npm, no CDN script tags. |
 
 ## Setup
 
@@ -45,7 +46,46 @@ python evaluate.py
 python server.py
 ```
 
-Then open **http://localhost:8000**. No API keys, no accounts, no cloud deployment.
+Then open **http://localhost:8000** — you'll land on a login page. The very
+first time `server.py` runs, it prints a generated admin login to the
+console, e.g.:
+
+```
+First run — an admin account was created:
+  Email:    admin@ghoststock.local
+  Password: ru9JiBfr4zqB
+```
+
+Use that to sign in. No API keys, no cloud deployment, no email delivery
+required.
+
+## Access & accounts
+
+**There is no public sign-up — on purpose.** This is an internal retail-ops
+tool sitting on a mall's live inventory data, not a consumer product. The
+correct model is: the mall has one admin (the GhostStock owner/IT contact),
+and that admin creates a login for every store manager who needs access,
+from the **Users** tab in the sidebar — email + a temporary password the
+admin hands them directly (in person, over chat, however), optionally
+**scoped to just the store(s) that manager runs**. A manager who logs in
+only ever sees their assigned store(s) — the store dropdown, every API
+call, and even a hand-crafted request for another store's data (403'd
+server-side, not just hidden in the UI) are all restricted to that scope.
+
+How it's built, concretely:
+- Accounts live in a local SQLite file (`data/ghoststock.db`, gitignored —
+  never commit it, it holds password hashes). No external auth service.
+- Passwords are hashed with PBKDF2-HMAC-SHA256 (200k iterations) and a
+  random per-user salt — never stored in plain text.
+- Sessions are an opaque token in an httponly cookie, valid 12 hours,
+  tracked in memory — restarting the server logs everyone out. Fine for a
+  single-process local deployment; swap `auth.SESSIONS` for a persisted
+  store before running multiple worker processes.
+- Pin the seeded admin's credentials instead of letting them be random by
+  setting `GHOSTSTOCK_ADMIN_EMAIL` / `GHOSTSTOCK_ADMIN_PASSWORD` before the
+  first run.
+- The last remaining admin account can't be deleted from the Users panel —
+  there's always a way back in.
 
 ### Using your own data (e.g. a real retailer's export)
 
@@ -94,11 +134,11 @@ a hard budget so the output stays usable by a human.
    (or just point at the already-generated `data/` folder) and narrate: *"800
    SKUs, 25 stores, 18 months of daily sales and system inventory, with
    hidden phantom stock-outs seeded in for evaluation."*
-2. **Launch the dashboard** — `python server.py`, open `localhost:8000`. Leave
-   the toggle on **Synthetic demo**, pick a store, and show **today's top-20
-   ranked alert list** — point out a couple of plain-English reasons, e.g.
-   *"14 zero-sales days while system shows 6 in stock, and no promo is
-   active."*
+2. **Launch the dashboard** — `python server.py`, open `localhost:8000`, sign
+   in with the admin login printed in the terminal. Leave the toggle on
+   **Synthetic demo**, pick a store, and show **today's top-20 ranked alert
+   list** — point out a couple of plain-English reasons, e.g. *"14 zero-sales
+   days while system shows 6 in stock, and no promo is active."*
 3. **Click a flagged SKU row** and show the **sales-vs-stock chart** — the
    orange sales bars flatline to zero while the blue system-stock line stays
    up; hover to show the synced tooltip calling out the exact gap.
