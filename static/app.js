@@ -86,6 +86,44 @@ async function bootstrapAuth() {
   return true;
 }
 
+function setupPasswordModal() {
+  el("#change-password-btn").addEventListener("click", () => {
+    el("#password-form").reset();
+    el("#password-modal-error").classList.remove("show");
+    el("#password-modal-overlay").classList.remove("hidden");
+  });
+  el("#password-modal-close-btn").addEventListener("click", () => {
+    el("#password-modal-overlay").classList.add("hidden");
+  });
+  el("#password-modal-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "password-modal-overlay") el("#password-modal-overlay").classList.add("hidden");
+  });
+  el("#password-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const current_password = el("#current-password").value;
+    const new_password = el("#new-own-password").value;
+    const errBox = el("#password-modal-error");
+    const btn = el("#password-form-submit");
+    btn.disabled = true;
+    btn.textContent = "Updating…";
+    try {
+      await api("/api/auth/change_password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password, new_password }),
+      });
+      el("#password-modal-overlay").classList.add("hidden");
+      toast("Password updated.");
+    } catch (err) {
+      errBox.textContent = err.message;
+      errBox.classList.add("show");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Update password";
+    }
+  });
+}
+
 // ------------------------------------------------------------------ init
 
 async function init() {
@@ -774,10 +812,13 @@ async function handleFile(file) {
 
 // -------------------------------------------------------------- admin: users
 
+let editingUserId = null; // null = create mode; set = editing that user's access
+
 function setupUsersPanel() {
+  setupPasswordModal(); // every role can change their own password
   if (currentUser.role !== "admin") return;
 
-  el("#add-user-btn").addEventListener("click", openUserModal);
+  el("#add-user-btn").addEventListener("click", () => openUserModal(null));
   el("#modal-close-btn").addEventListener("click", closeUserModal);
   el("#user-modal-overlay").addEventListener("click", (e) => {
     if (e.target.id === "user-modal-overlay") closeUserModal();
@@ -793,18 +834,29 @@ function setupUsersPanel() {
       toast(e.message, true);
     }
   });
-  el("#user-form").addEventListener("submit", submitNewUser);
+  el("#user-form").addEventListener("submit", submitUserForm);
 }
 
-function openUserModal() {
+function openUserModal(user) {
+  editingUserId = user ? user.id : null;
   el("#user-form").reset();
   el("#modal-error").classList.remove("show");
-  el("#store-scope-field").classList.remove("hidden");
-  // unchecked by default: scoping a manager to specific stores only works if
-  // the admin has to deliberately opt stores in, not uncheck the ones to exclude
+
+  el("#user-modal-title").textContent = user ? `Edit ${user.email}` : "Add a user";
+  el("#new-email-field").classList.toggle("hidden", !!user);
+  el("#new-password-field").classList.toggle("hidden", !!user);
+  el("#user-form-submit").textContent = user ? "Save changes" : "Create user";
+
+  const role = user ? user.role : "manager";
+  el("#new-role").value = role;
+  el("#store-scope-field").classList.toggle("hidden", role === "admin");
+
+  const assigned = user && user.store_ids !== "ALL" ? new Set(user.store_ids.split(",")) : new Set();
+  // unchecked by default on create: scoping a manager only works if the admin
+  // has to deliberately opt stores in, not uncheck the ones to exclude
   const stores = (state.meta && state.meta.stores) || [];
   el("#store-checklist").innerHTML = stores
-    .map((s) => `<label class="store-check-item"><input type="checkbox" value="${s}"> ${s}</label>`)
+    .map((s) => `<label class="store-check-item"><input type="checkbox" value="${s}" ${assigned.has(s) ? "checked" : ""}> ${s}</label>`)
     .join("");
   el("#user-modal-overlay").classList.remove("hidden");
 }
@@ -813,20 +865,36 @@ function closeUserModal() {
   el("#user-modal-overlay").classList.add("hidden");
 }
 
-async function submitNewUser(e) {
+function submitUserForm(e) {
   e.preventDefault();
+  return editingUserId ? submitEditUser() : submitNewUser();
+}
+
+function collectStoreScope(role) {
+  if (role === "admin") return "ALL";
+  const checked = Array.from(document.querySelectorAll("#store-checklist input:checked")).map((i) => i.value);
+  if (!checked.length) {
+    showModalError("Pick at least one store for a manager account (or make them an admin instead).");
+    return null;
+  }
+  return checked.join(",");
+}
+
+async function submitNewUser() {
   const email = el("#new-email").value.trim();
   const password = el("#new-password").value;
   const role = el("#new-role").value;
-  let storeIds = "ALL";
-  if (role !== "admin") {
-    const checked = Array.from(document.querySelectorAll("#store-checklist input:checked")).map((i) => i.value);
-    if (!checked.length) {
-      showModalError("Pick at least one store for a manager account (or make them an admin instead).");
-      return;
-    }
-    storeIds = checked.join(",");
+  if (!email || !email.includes("@")) {
+    showModalError("Enter a valid email address.");
+    return;
   }
+  if (!password || password.length < 8) {
+    showModalError("Temporary password must be at least 8 characters.");
+    return;
+  }
+  const storeIds = collectStoreScope(role);
+  if (storeIds === null) return;
+
   const btn = el("#user-form-submit");
   btn.disabled = true;
   btn.textContent = "Creating…";
@@ -844,6 +912,31 @@ async function submitNewUser(e) {
   } finally {
     btn.disabled = false;
     btn.textContent = "Create user";
+  }
+}
+
+async function submitEditUser() {
+  const role = el("#new-role").value;
+  const storeIds = collectStoreScope(role);
+  if (storeIds === null) return;
+
+  const btn = el("#user-form-submit");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    await api(`/api/admin/users/${editingUserId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role, store_ids: storeIds }),
+    });
+    closeUserModal();
+    toast("Access updated.");
+    loadUsers();
+  } catch (e) {
+    showModalError(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save changes";
   }
 }
 
@@ -888,6 +981,11 @@ function renderUsersTable(users) {
     addedCell.className = "store-scope-text";
     addedCell.textContent = added;
     const actionsCell = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.className = "view-btn";
+    editBtn.textContent = "Edit access";
+    editBtn.style.marginRight = "6px";
+    editBtn.addEventListener("click", () => openUserModal(u));
     const resetBtn = document.createElement("button");
     resetBtn.className = "view-btn";
     resetBtn.textContent = "Reset password";
@@ -897,6 +995,7 @@ function renderUsersTable(users) {
     delBtn.className = "btn-danger-text";
     delBtn.textContent = "Remove";
     delBtn.addEventListener("click", () => removeUser(u));
+    actionsCell.appendChild(editBtn);
     actionsCell.appendChild(resetBtn);
     actionsCell.appendChild(delBtn);
 

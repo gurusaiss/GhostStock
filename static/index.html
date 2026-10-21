@@ -61,6 +61,9 @@
         <div class="user-email" id="user-email">—</div>
         <div class="user-role-badge" id="user-role-badge">—</div>
       </div>
+      <button class="icon-btn" id="change-password-btn" title="Change your password">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="11" width="16" height="9" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
       <button class="icon-btn" id="logout-btn" title="Log out">
         <svg viewBox="0 0 24 24" fill="none"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l5-5-5-5M21 12H9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -223,20 +226,20 @@
 <div class="modal-overlay hidden" id="user-modal-overlay">
   <div class="modal" id="user-modal">
     <div class="modal-head">
-      <h3>Add a user</h3>
+      <h3 id="user-modal-title">Add a user</h3>
       <button class="icon-btn" id="modal-close-btn">
         <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       </button>
     </div>
     <form id="user-form">
-      <div class="login-field">
+      <div class="login-field" id="new-email-field">
         <label for="new-email">Email</label>
-        <input type="email" id="new-email" required />
+        <input type="email" id="new-email" />
       </div>
-      <div class="login-field">
+      <div class="login-field" id="new-password-field">
         <label for="new-password">Temporary password</label>
         <div class="password-row">
-          <input type="text" id="new-password" required minlength="8" />
+          <input type="text" id="new-password" minlength="8" />
           <button type="button" class="btn-ghost" id="gen-password-btn">Generate</button>
         </div>
       </div>
@@ -253,6 +256,29 @@
       </div>
       <div class="modal-error" id="modal-error"></div>
       <button type="submit" class="login-submit" id="user-form-submit">Create user</button>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="password-modal-overlay">
+  <div class="modal" id="password-modal">
+    <div class="modal-head">
+      <h3>Change your password</h3>
+      <button class="icon-btn" id="password-modal-close-btn">
+        <svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <form id="password-form">
+      <div class="login-field">
+        <label for="current-password">Current password</label>
+        <input type="password" id="current-password" required />
+      </div>
+      <div class="login-field">
+        <label for="new-own-password">New password</label>
+        <input type="password" id="new-own-password" required minlength="8" />
+      </div>
+      <div class="modal-error" id="password-modal-error"></div>
+      <button type="submit" class="login-submit" id="password-form-submit">Update password</button>
     </form>
   </div>
 </div>

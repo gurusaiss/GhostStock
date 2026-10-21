@@ -137,8 +137,21 @@ class ResetPasswordPayload(BaseModel):
     password: str
 
 
+class EditUserPayload(BaseModel):
+    role: str
+    store_ids: str = "ALL"
+
+
+class ChangePasswordPayload(BaseModel):
+    current_password: str
+    new_password: str
+
+
 @app.post("/api/auth/login")
 def login(payload: LoginPayload, response: Response):
+    wait = auth.login_locked_out(payload.email)
+    if wait:
+        raise HTTPException(429, f"Too many failed attempts. Try again in {int(wait) + 1}s.")
     user = auth.verify_login(payload.email, payload.password)
     if not user:
         raise HTTPException(401, "Incorrect email or password.")
@@ -162,6 +175,18 @@ def me(user: dict = Depends(current_user)):
     return {"email": user["email"], "role": user["role"]}
 
 
+@app.post("/api/auth/change_password")
+def change_my_password(payload: ChangePasswordPayload, user: dict = Depends(current_user)):
+    """Anyone — including the admin — can swap a temporary/admin-assigned
+    password for one only they know. Requires the current password, unlike
+    an admin's force-reset of someone else's account."""
+    try:
+        auth.change_own_password(user["user_id"], payload.current_password, payload.new_password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
 # ----------------------------------------------------------------------------
 # Admin: user management (the only way new logins get created — no signup)
 # ----------------------------------------------------------------------------
@@ -181,6 +206,17 @@ def admin_create_user(payload: NewUserPayload, admin: dict = Depends(require_adm
     except Exception as e:
         if "UNIQUE" in str(e):
             raise HTTPException(400, "A user with that email already exists.")
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.patch("/api/admin/users/{user_id}")
+def admin_edit_user(user_id: int, payload: EditUserPayload, admin: dict = Depends(require_admin)):
+    """Change an existing user's role / store scope — e.g. a manager gets
+    moved to a different store. Does not touch their password."""
+    try:
+        auth.update_user_access(user_id, payload.role, payload.store_ids)
+    except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
 

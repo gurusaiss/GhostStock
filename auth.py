@@ -113,21 +113,45 @@ def list_users():
     return [dict(r) for r in rows]
 
 
+def _guard_last_admin(conn, user_id: int, new_role: str | None = None):
+    """Refuses an operation that would leave the mall with zero admins — either
+    deleting the last admin, or demoting them to manager."""
+    row = conn.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row or row["role"] != "admin":
+        return
+    if new_role == "admin":
+        return  # staying admin — not a demotion
+    n_admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
+    if n_admins <= 1:
+        raise ValueError("Can't remove the last remaining admin account.")
+
+
 def delete_user(user_id: int):
     conn = get_db()
-    # never allow deleting the last remaining admin — the mall would lock itself out
-    row = conn.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
-    if row and row["role"] == "admin":
-        n_admins = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin'").fetchone()["c"]
-        if n_admins <= 1:
-            conn.close()
-            raise ValueError("Can't delete the last remaining admin account.")
-    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
-    conn.commit()
-    conn.close()
+    try:
+        _guard_last_admin(conn, user_id)
+        conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_user_access(user_id: int, role: str, store_ids: str = "ALL"):
+    """Admin editing an existing user's role / store scope (not their password)."""
+    if role not in ("admin", "manager"):
+        raise ValueError("role must be 'admin' or 'manager'")
+    conn = get_db()
+    try:
+        _guard_last_admin(conn, user_id, new_role=role)
+        scope = "ALL" if role == "admin" else (store_ids or "ALL")
+        conn.execute("UPDATE users SET role=?, store_ids=? WHERE id=?", (role, scope, user_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def reset_password(user_id: int, new_password: str):
+    """Admin force-setting someone else's password (e.g. they're locked out)."""
     if len(new_password) < 8:
         raise ValueError("Password must be at least 8 characters.")
     digest, salt = hash_password(new_password)
@@ -137,15 +161,72 @@ def reset_password(user_id: int, new_password: str):
     conn.close()
 
 
+def change_own_password(user_id: int, current_password: str, new_password: str):
+    """Self-service password change — requires knowing the current password,
+    unlike admin reset_password. The right way for anyone (including the
+    admin) to stop using a temporary/admin-assigned password long-term."""
+    if len(new_password) < 8:
+        raise ValueError("New password must be at least 8 characters.")
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("User not found.")
+    digest, _ = hash_password(current_password, row["salt"])
+    if not secrets.compare_digest(digest, row["password_hash"]):
+        conn.close()
+        raise ValueError("Current password is incorrect.")
+    new_digest, new_salt = hash_password(new_password)
+    conn.execute("UPDATE users SET password_hash=?, salt=? WHERE id=?", (new_digest, new_salt, user_id))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------- login throttle
+# A minimal brute-force guard: N failed attempts for an email locks it out for
+# a short window. In-memory, so it resets on restart — fine for the threat
+# model here (a local/LAN tool), not a substitute for a real rate limiter if
+# this is ever put on the open internet.
+
+_FAILED_LOGINS: dict = {}  # email -> {"count": int, "locked_until": float}
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_SECONDS = 60
+
+
+def login_locked_out(email: str) -> float:
+    """Returns seconds remaining if locked out, else 0."""
+    rec = _FAILED_LOGINS.get(email.strip().lower())
+    if not rec:
+        return 0
+    remaining = rec["locked_until"] - time.time()
+    return max(0, remaining)
+
+
+def _record_login_failure(email: str):
+    email = email.strip().lower()
+    rec = _FAILED_LOGINS.setdefault(email, {"count": 0, "locked_until": 0})
+    rec["count"] += 1
+    if rec["count"] >= MAX_LOGIN_ATTEMPTS:
+        rec["locked_until"] = time.time() + LOCKOUT_SECONDS
+        rec["count"] = 0
+
+
+def _clear_login_failures(email: str):
+    _FAILED_LOGINS.pop(email.strip().lower(), None)
+
+
 def verify_login(email: str, password: str):
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE email=?", (email.strip().lower(),)).fetchone()
     conn.close()
     if not row:
+        _record_login_failure(email)
         return None
     digest, _ = hash_password(password, row["salt"])
     if not secrets.compare_digest(digest, row["password_hash"]):
+        _record_login_failure(email)
         return None
+    _clear_login_failures(email)
     return dict(row)
 
 
