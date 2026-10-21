@@ -85,10 +85,14 @@ How it's built, concretely:
   never commit it, it holds password hashes). No external auth service.
 - Passwords are hashed with PBKDF2-HMAC-SHA256 (200k iterations) and a
   random per-user salt — never stored in plain text.
-- Sessions are an opaque token in an httponly cookie, valid 12 hours,
-  tracked in memory — restarting the server logs everyone out. Fine for a
-  single-process local deployment; swap `auth.SESSIONS` for a persisted
-  store before running multiple worker processes.
+- Sessions are an opaque token in an httponly, SameSite=Lax cookie, valid 12
+  hours. Only a hash of the token is stored (in the same SQLite file), so
+  sessions survive restarts and multiple workers. Removing a user, or
+  resetting/changing their password, ends their sessions; role/store edits
+  apply on their next request.
+- CSRF: every state-changing `/api` call must carry an `X-Requested-With`
+  header, which a cross-site form can't send. Serving over HTTPS? Set
+  `GHOSTSTOCK_SECURE_COOKIES=1` so the cookie is never sent in the clear.
 - Pin the seeded admin's credentials instead of letting them be random by
   setting `GHOSTSTOCK_ADMIN_EMAIL` / `GHOSTSTOCK_ADMIN_PASSWORD` before the
   first run.
@@ -139,6 +143,19 @@ For every SKU-store pair, as of a given date:
 
 Only the top 20 highest-confidence alerts per store per day are ever shown —
 a hard budget so the output stays usable by a human.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+15 API tests cover login/lockout, CSRF, store scoping (including direct
+requests for out-of-scope stores), admin-only endpoints, edit/remove/reset
+taking effect on live sessions, sessions surviving a restart, and the
+last-admin guard. They use a temp database and a tiny dataset, so they take
+seconds and don't need `generate_data.py`.
 
 ## Demo Script (for a 90-second recording)
 

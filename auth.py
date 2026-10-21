@@ -14,11 +14,12 @@ no email delivery required, fully offline. Passwords are never stored in
 plain text: PBKDF2-HMAC-SHA256 with a random per-user salt (stdlib only, no
 extra dependency).
 
-Sessions: a random opaque token in an httponly cookie, mapped server-side to
-the session record. Sessions live in memory, so restarting the server logs
-everyone out — acceptable for a local/single-process demo; swap SESSIONS for
-a persisted store (e.g. a table, or Redis) before running this multi-process
-or behind a reverse proxy with multiple workers.
+Sessions: a random opaque token in an httponly cookie. Only a SHA-256 hash of
+the token is stored (in the same SQLite file), so sessions survive a server
+restart and work across multiple worker processes, and a leaked database
+can't be replayed as live cookies. Each lookup joins the user's current
+role/store scope, so admin edits apply immediately and removing a user ends
+their sessions.
 """
 
 import hashlib
@@ -31,8 +32,6 @@ DB_PATH = Path(__file__).parent / "data" / "ghoststock.db"
 SESSION_TTL_SECONDS = 12 * 60 * 60  # 12 hours
 PBKDF2_ITERATIONS = 200_000
 
-# token -> {user_id, email, role, store_ids, expires}
-SESSIONS: dict = {}
 
 
 def get_db() -> sqlite3.Connection:
@@ -67,6 +66,14 @@ def init_db():
             created_at REAL NOT NULL
         )"""
     )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires REAL NOT NULL
+        )"""
+    )
+    conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
     conn.commit()
     n_users = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
 
@@ -130,6 +137,7 @@ def delete_user(user_id: int):
     conn = get_db()
     try:
         _guard_last_admin(conn, user_id)
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))
         conn.commit()
     finally:
@@ -159,9 +167,10 @@ def reset_password(user_id: int, new_password: str):
     conn.execute("UPDATE users SET password_hash=?, salt=? WHERE id=?", (digest, salt, user_id))
     conn.commit()
     conn.close()
+    destroy_user_sessions(user_id)  # whoever knew the old password is signed out
 
 
-def change_own_password(user_id: int, current_password: str, new_password: str):
+def change_own_password(user_id: int, current_password: str, new_password: str, keep_token: str | None = None):
     """Self-service password change — requires knowing the current password,
     unlike admin reset_password. The right way for anyone (including the
     admin) to stop using a temporary/admin-assigned password long-term."""
@@ -178,6 +187,11 @@ def change_own_password(user_id: int, current_password: str, new_password: str):
         raise ValueError("Current password is incorrect.")
     new_digest, new_salt = hash_password(new_password)
     conn.execute("UPDATE users SET password_hash=?, salt=? WHERE id=?", (new_digest, new_salt, user_id))
+    if keep_token:
+        conn.execute("DELETE FROM sessions WHERE user_id=? AND token_hash != ?",
+                     (user_id, _token_hash(keep_token)))
+    else:
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
 
@@ -230,33 +244,58 @@ def verify_login(email: str, password: str):
     return dict(row)
 
 
+def _token_hash(token: str) -> str:
+    # only a hash of the token is stored, so a leaked DB can't be replayed as cookies
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def create_session(user: dict) -> str:
     token = secrets.token_urlsafe(32)
-    SESSIONS[token] = {
-        "user_id": user["id"],
-        "email": user["email"],
-        "role": user["role"],
-        "store_ids": user["store_ids"],
-        "expires": time.time() + SESSION_TTL_SECONDS,
-    }
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)",
+        (_token_hash(token), user["id"], time.time() + SESSION_TTL_SECONDS),
+    )
+    conn.commit()
+    conn.close()
     return token
 
 
 def get_session(token: str | None):
+    """Looks the session up together with the user's CURRENT role/scope, so an
+    admin's edit takes effect on the next request and a removed user's
+    session dies with the user (ON DELETE CASCADE)."""
     if not token:
         return None
-    sess = SESSIONS.get(token)
-    if not sess:
-        return None
-    if sess["expires"] < time.time():
-        SESSIONS.pop(token, None)
-        return None
-    return sess
+    conn = get_db()
+    conn.execute("PRAGMA foreign_keys = ON")
+    row = conn.execute(
+        """SELECT s.expires, u.id AS user_id, u.email, u.role, u.store_ids
+           FROM sessions s JOIN users u ON u.id = s.user_id
+           WHERE s.token_hash = ?""",
+        (_token_hash(token),),
+    ).fetchone()
+    if row and row["expires"] < time.time():
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+        conn.commit()
+        row = None
+    conn.close()
+    return dict(row) if row else None
 
 
 def destroy_session(token: str | None):
     if token:
-        SESSIONS.pop(token, None)
+        conn = get_db()
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+        conn.commit()
+        conn.close()
+
+
+def destroy_user_sessions(user_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
 
 
 def allowed_stores(user: dict, all_stores: list[str]) -> list[str]:

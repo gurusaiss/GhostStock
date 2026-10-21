@@ -18,13 +18,14 @@ login the very first time the database is created.
 
 import io
 import json
+import os
 import secrets
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -42,8 +43,25 @@ from detector import (
 APP_DIR = Path(__file__).parent
 EVAL_SUMMARY_PATH = APP_DIR / "data" / "eval_summary.json"
 SESSION_COOKIE = "gs_session"
+# Set GHOSTSTOCK_SECURE_COOKIES=1 when serving over HTTPS so the session cookie
+# is never sent in the clear. Off by default so plain http://localhost works.
+SECURE_COOKIES = os.environ.get("GHOSTSTOCK_SECURE_COOKIES") == "1"
 
 app = FastAPI(title="GhostStock API")
+
+
+@app.middleware("http")
+async def require_ajax_header(request: Request, call_next):
+    """CSRF defence for the cookie session: every state-changing /api call must
+    carry a custom header. A cross-site <form> or <img> can't set one, and a
+    cross-site fetch that does triggers a CORS preflight this server never
+    approves. SameSite=Lax on the cookie is the second layer."""
+    if (request.url.path.startswith("/api/")
+            and request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and request.headers.get("x-requested-with") != "ghoststock"):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "Missing CSRF header."}, status_code=403)
+    return await call_next(request)
 
 # ----------------------------------------------------------------------------
 # Dataset state — the synthetic set loads once at startup; an uploaded CSV is
@@ -111,13 +129,16 @@ def require_admin(user: dict = Depends(current_user)) -> dict:
     return user
 
 
-def _store_scope(user: dict, all_stores: list) -> list:
-    """Stores this user is allowed to see, in the order the dataset gives them."""
+def _store_scope(user: dict, all_stores: list, source: str = "synthetic") -> list:
+    """Stores this user may see. Scoping applies to the shared dataset; a CSV the
+    user uploaded themselves is private to them, so all its stores are theirs."""
+    if source == "upload":
+        return all_stores
     return auth.allowed_stores(user, all_stores)
 
 
-def _assert_store_allowed(user: dict, store: str, all_stores: list):
-    if store not in _store_scope(user, all_stores):
+def _assert_store_allowed(user: dict, store: str, all_stores: list, source: str = "synthetic"):
+    if store not in _store_scope(user, all_stores, source):
         raise HTTPException(403, f"You don't have access to store {store}.")
 
 
@@ -157,7 +178,7 @@ def login(payload: LoginPayload, response: Response):
         raise HTTPException(401, "Incorrect email or password.")
     token = auth.create_session(user)
     response.set_cookie(
-        SESSION_COOKIE, token, httponly=True, samesite="lax",
+        SESSION_COOKIE, token, httponly=True, samesite="lax", secure=SECURE_COOKIES,
         max_age=auth.SESSION_TTL_SECONDS,
     )
     return {"email": user["email"], "role": user["role"]}
@@ -176,12 +197,14 @@ def me(user: dict = Depends(current_user)):
 
 
 @app.post("/api/auth/change_password")
-def change_my_password(payload: ChangePasswordPayload, user: dict = Depends(current_user)):
+def change_my_password(payload: ChangePasswordPayload, user: dict = Depends(current_user),
+                       gs_session: Optional[str] = Cookie(default=None)):
     """Anyone — including the admin — can swap a temporary/admin-assigned
     password for one only they know. Requires the current password, unlike
     an admin's force-reset of someone else's account."""
     try:
-        auth.change_own_password(user["user_id"], payload.current_password, payload.new_password)
+        auth.change_own_password(user["user_id"], payload.current_password, payload.new_password,
+                                 keep_token=gs_session)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
@@ -253,7 +276,7 @@ def admin_generate_password(admin: dict = Depends(require_admin)):
 def get_meta(source: str = "synthetic", user: dict = Depends(current_user)):
     sales = _get_dataset(source, user)
     all_stores = sorted(sales["store_id"].unique().tolist())
-    stores = _store_scope(user, all_stores)
+    stores = _store_scope(user, all_stores, source)
     dates = sales["date"].drop_duplicates().sort_values()
     min_eval_idx = max(1, int(len(dates) * 0.25))  # needs lookback history for a baseline
     entry = _state["uploads"].get(user["user_id"])
@@ -274,7 +297,7 @@ def get_meta(source: str = "synthetic", user: dict = Depends(current_user)):
 @app.get("/api/alerts")
 def get_alerts(store: str, date: str, source: str = "synthetic", user: dict = Depends(current_user)):
     sales = _get_dataset(source, user)
-    _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()))
+    _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()), source)
     alerts = top_alerts_for_store_day(sales, store, date, top_n=TOP_N)
     if alerts.empty:
         return {"store": store, "date": date, "alerts": []}
@@ -285,7 +308,7 @@ def get_alerts(store: str, date: str, source: str = "synthetic", user: dict = De
 def get_chart(store: str, sku: str, date: str, source: str = "synthetic", days: int = 60,
               user: dict = Depends(current_user)):
     sales = _get_dataset(source, user)
-    _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()))
+    _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()), source)
     as_of = pd.Timestamp(date)
     hist = sales[
         (sales["store_id"] == store)

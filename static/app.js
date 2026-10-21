@@ -51,7 +51,10 @@ function toast(msg, isErr) {
   toast._t = setTimeout(() => t.classList.add("hidden"), 4000);
 }
 
-async function api(path, opts) {
+const CSRF_HEADER = { "X-Requested-With": "ghoststock" };
+
+async function api(path, opts = {}) {
+  opts.headers = { ...CSRF_HEADER, ...(opts.headers || {}) };
   const res = await fetch(API + path, opts);
   if (res.status === 401) {
     window.location.href = "/login.html";
@@ -80,7 +83,7 @@ async function bootstrapAuth() {
   el("#user-avatar").textContent = currentUser.email.slice(0, 1);
   el("#nav-users").classList.toggle("hidden", currentUser.role !== "admin");
   el("#logout-btn").addEventListener("click", async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/api/auth/logout", { method: "POST", headers: CSRF_HEADER });
     window.location.href = "/login.html";
   });
   return true;
@@ -797,7 +800,7 @@ async function handleFile(file) {
   const form = new FormData();
   form.append("file", file);
   try {
-    const res = await fetch("/api/upload", { method: "POST", body: form });
+    const res = await fetch("/api/upload", { method: "POST", body: form, headers: CSRF_HEADER });
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || "Upload failed");
     statusEl.textContent = `Loaded ${body.nRows.toLocaleString()} rows from ${body.filename}: ${body.nStores} stores, ${body.nSkus} SKUs.`;

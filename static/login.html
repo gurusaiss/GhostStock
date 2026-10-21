@@ -139,7 +139,7 @@
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Requested-With": "ghoststock" },
         body: JSON.stringify({
           email: document.getElementById("email").value,
           password: document.getElementById("password").value,
