@@ -127,6 +127,7 @@
 </div>
 
 <script>
+  fetch("/api/auth/me").then((r) => { if (r.ok) window.location.href = "/"; });
   const form = document.getElementById("login-form");
   const errorBox = document.getElementById("login-error");
   const btn = document.getElementById("login-btn");

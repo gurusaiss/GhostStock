@@ -175,3 +175,60 @@ def test_duplicate_email_and_short_password(client):
     assert client.post("/api/admin/users", headers=H, json=body).status_code == 400
     body.update(email="new@test.local", password="short")
     assert client.post("/api/admin/users", headers=H, json=body).status_code == 400
+
+
+def _csv(sku="<img src=x onerror=alert(1)>"):
+    lines = ["item_code,store,date,qty_sold,qty_on_hand"]
+    for i in range(150):
+        d = (pd.Timestamp("2026-01-01") + pd.Timedelta(days=i)).strftime("%Y-%m-%d")
+        lines.append(f'"{sku}",STR-A,{d},{0 if i >= 120 else 2},10')
+    return "\n".join(lines).encode()
+
+
+def test_bad_date_is_400_not_500(client):
+    login(client)
+    assert client.get("/api/alerts", params={"store": "S001", "date": "garbage"}).status_code == 400
+    assert client.get("/api/chart", params={"store": "S001", "sku": "SKU1", "date": "nope"}).status_code == 400
+
+
+def test_chart_window_is_clamped(client):
+    login(client)
+    r = client.get("/api/chart", params={"store": "S001", "sku": "SKU1", "date": "2026-05-30", "days": 10**9})
+    assert r.status_code == 200 and len(r.json()["dates"]) <= 150
+
+
+def test_upload_is_private_and_unscoped(client):
+    make_manager(client, "S001", email="a@test.local")
+    make_manager(client, "S002", email="b@test.local")
+    login(client, "a@test.local", "ManagerPass1")
+    r = client.post("/api/upload", headers=H, files={"file": ("x.csv", _csv(), "text/csv")})
+    assert r.status_code == 200, r.text
+    # their own file's store is visible even though it isn't in their assigned list
+    assert client.get("/api/meta", params={"source": "upload"}).json()["stores"] == ["STR-A"]
+    client.cookies.clear()
+    login(client, "b@test.local", "ManagerPass1")
+    # another user has uploaded nothing
+    assert client.get("/api/meta", params={"source": "upload"}).status_code == 400
+
+
+def test_upload_size_limit(client, monkeypatch):
+    monkeypatch.setattr(server, "MAX_UPLOAD_BYTES", 100)
+    login(client)
+    r = client.post("/api/upload", headers=H, files={"file": ("x.csv", _csv(), "text/csv")})
+    assert r.status_code == 413
+
+
+def test_invalid_email_rejected(client):
+    login(client)
+    r = client.post("/api/admin/users", headers=H, json={
+        "email": "not-an-email", "password": "Whatever123", "role": "manager", "store_ids": "S001"})
+    assert r.status_code == 400
+
+
+def test_startup_creates_db_and_seeds_admin(tmp_path, monkeypatch):
+    """`uvicorn server:app` (no __main__) must still bring up a usable database."""
+    monkeypatch.setattr(auth, "DB_PATH", tmp_path / "fresh.db")
+    monkeypatch.setenv("GHOSTSTOCK_ADMIN_EMAIL", "boot@test.local")
+    monkeypatch.setenv("GHOSTSTOCK_ADMIN_PASSWORD", "BootPass1234")
+    with TestClient(server.app) as c:
+        assert login(c, "boot@test.local", "BootPass1234").status_code == 200

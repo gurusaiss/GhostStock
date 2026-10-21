@@ -20,6 +20,7 @@ import io
 import json
 import os
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -47,7 +48,29 @@ SESSION_COOKIE = "gs_session"
 # is never sent in the clear. Off by default so plain http://localhost works.
 SECURE_COOKIES = os.environ.get("GHOSTSTOCK_SECURE_COOKIES") == "1"
 
-app = FastAPI(title="GhostStock API")
+SEEDED_ADMIN = None
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    """Create the users table (and seed the first admin) however the app is
+    launched — `python server.py` or `uvicorn server:app`."""
+    global SEEDED_ADMIN
+    SEEDED_ADMIN = auth.init_db()
+    if SEEDED_ADMIN:
+        email, password = SEEDED_ADMIN
+        print("=" * 60)
+        print("First run — an admin account was created:")
+        print(f"  Email:    {email}")
+        print(f"  Password: {password}")
+        print("Sign in, then add mall staff from the Users tab. Set")
+        print("GHOSTSTOCK_ADMIN_EMAIL / GHOSTSTOCK_ADMIN_PASSWORD to pin these.")
+        print("=" * 60)
+    yield
+
+
+app = FastAPI(title="GhostStock API", lifespan=lifespan)
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 @app.middleware("http")
@@ -94,6 +117,13 @@ def _get_dataset(source: str, user: dict):
             500, "Synthetic dataset not found — run `python generate_data.py` first."
         )
     return sales
+
+
+def _parse_date(date: str) -> pd.Timestamp:
+    try:
+        return pd.Timestamp(date)
+    except (ValueError, TypeError):
+        raise HTTPException(400, f"Invalid date: {date!r} (expected YYYY-MM-DD).")
 
 
 def _df_to_native(df: pd.DataFrame) -> list:
@@ -222,6 +252,8 @@ def admin_list_users(admin: dict = Depends(require_admin)):
 
 @app.post("/api/admin/users")
 def admin_create_user(payload: NewUserPayload, admin: dict = Depends(require_admin)):
+    if "@" not in payload.email or " " in payload.email.strip():
+        raise HTTPException(400, "Enter a valid email address.")
     try:
         auth.create_user(payload.email, payload.password, payload.role, payload.store_ids)
     except ValueError as e:
@@ -298,6 +330,7 @@ def get_meta(source: str = "synthetic", user: dict = Depends(current_user)):
 def get_alerts(store: str, date: str, source: str = "synthetic", user: dict = Depends(current_user)):
     sales = _get_dataset(source, user)
     _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()), source)
+    _parse_date(date)
     alerts = top_alerts_for_store_day(sales, store, date, top_n=TOP_N)
     if alerts.empty:
         return {"store": store, "date": date, "alerts": []}
@@ -309,7 +342,8 @@ def get_chart(store: str, sku: str, date: str, source: str = "synthetic", days: 
               user: dict = Depends(current_user)):
     sales = _get_dataset(source, user)
     _assert_store_allowed(user, store, sorted(sales["store_id"].unique().tolist()), source)
-    as_of = pd.Timestamp(date)
+    as_of = _parse_date(date)
+    days = max(1, min(days, 365))
     hist = sales[
         (sales["store_id"] == store)
         & (sales["sku_id"] == sku)
@@ -390,9 +424,13 @@ def recompute_summary(user: dict = Depends(current_user)):
 @app.post("/api/upload")
 async def upload_csv(file: UploadFile = File(...), user: dict = Depends(current_user)):
     try:
-        raw_bytes = await file.read()
+        raw_bytes = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw_bytes) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "File is larger than the 50 MB upload limit.")
         df = load_real_csv(io.BytesIO(raw_bytes))
         df = normalize_uploaded(df)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, f"Could not parse this file: {e}")
     if df.empty:
@@ -426,16 +464,5 @@ app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")
 if __name__ == "__main__":
     import uvicorn
 
-    seeded = auth.init_db()
-    print("=" * 60)
     print("GhostStock running at http://localhost:8000")
-    if seeded:
-        email, password = seeded
-        print("First run — an admin account was created:")
-        print(f"  Email:    {email}")
-        print(f"  Password: {password}")
-        print("Log in with this, then create accounts for mall staff from")
-        print("the Users panel. Set GHOSTSTOCK_ADMIN_EMAIL / "
-              "GHOSTSTOCK_ADMIN_PASSWORD env vars to pin these instead.")
-    print("=" * 60)
     uvicorn.run(app, host="0.0.0.0", port=8000)

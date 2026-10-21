@@ -25,6 +25,10 @@ const state = {
 };
 
 const el = (sel) => document.querySelector(sel);
+// Anything that came from a user-supplied CSV (SKU/store codes) must be escaped
+// before it goes into an HTML string.
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtINR = (n) => {
   if (n == null || Number.isNaN(n)) return "—";
   const abs = Math.abs(n);
@@ -471,14 +475,17 @@ function exportCsv() {
   const rows = getFilteredSortedAlerts();
   if (!rows.length) { toast("Nothing to export.", true); return; }
   const header = ["rank", "sku", "confidence_pct", "severity", "streak_days", "normal_pace_per_day", "stock_shown", "promo_overlap_pct", "reason"];
+  // a cell starting with = + - @ would run as a formula when opened in Excel
+  const safe = (v) => { const t = String(v); return /^[=+\-@\t\r]/.test(t) ? "'" + t : t; };
+  const q = (v) => `"${safe(v).replace(/"/g, '""')}"`;
   const lines = [header.join(",")];
   rows.forEach((a) => {
     const rank = state.alerts.indexOf(a) + 1;
     const vals = [
-      rank, a.sku_id, a.confidence_score, severityOf(a.confidence_score),
+      rank, q(a.sku_id), a.confidence_score, severityOf(a.confidence_score),
       a.streak_len, a.baseline_mean.toFixed(2), a.current_stock,
       Math.round(a.promo_fraction_in_streak * 100),
-      `"${a.reason.replace(/"/g, '""')}"`,
+      q(a.reason),
     ];
     lines.push(vals.join(","));
   });
@@ -510,7 +517,7 @@ async function selectSku(sku) {
   // "jump to SKU" dropdown mirrors the current alert list
   const skuSel = el("#sku-select");
   skuSel.innerHTML = state.alerts
-    .map((a) => `<option value="${a.sku_id}" ${a.sku_id === sku ? "selected" : ""}>${a.sku_id} (${a.confidence_score.toFixed(0)}%)</option>`)
+    .map((a) => `<option value="${esc(a.sku_id)}" ${a.sku_id === sku ? "selected" : ""}>${esc(a.sku_id)} (${a.confidence_score.toFixed(0)}%)</option>`)
     .join("");
 
   const sev = severityOf(row.confidence_score);
@@ -859,7 +866,7 @@ function openUserModal(user) {
   // has to deliberately opt stores in, not uncheck the ones to exclude
   const stores = (state.meta && state.meta.stores) || [];
   el("#store-checklist").innerHTML = stores
-    .map((s) => `<label class="store-check-item"><input type="checkbox" value="${s}" ${assigned.has(s) ? "checked" : ""}> ${s}</label>`)
+    .map((s) => `<label class="store-check-item"><input type="checkbox" value="${esc(s)}" ${assigned.has(s) ? "checked" : ""}> ${esc(s)}</label>`)
     .join("");
   el("#user-modal-overlay").classList.remove("hidden");
 }

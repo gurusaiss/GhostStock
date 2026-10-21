@@ -46,7 +46,7 @@ python evaluate.py
 python server.py
 ```
 
-Then open **http://localhost:8000** — you'll land on a login page. The very
+Then open **http://localhost:8000** (or run `uvicorn server:app --port 8000` — the database and first admin are created either way) — you'll land on a login page. The very
 first time `server.py` runs, it prints a generated admin login to the
 console, e.g.:
 
@@ -151,10 +151,10 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-15 API tests cover login/lockout, CSRF, store scoping (including direct
+21 API tests cover login/lockout, CSRF, store scoping (including direct
 requests for out-of-scope stores), admin-only endpoints, edit/remove/reset
 taking effect on live sessions, sessions surviving a restart, and the
-last-admin guard. They use a temp database and a tiny dataset, so they take
+last-admin guard, plus input handling (bad dates, upload size limit, private per-user uploads) and startup via `uvicorn server:app`. They use a temp database and a tiny dataset, so they take
 seconds and don't need `generate_data.py`.
 
 ## Demo Script (for a 90-second recording)
