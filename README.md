@@ -71,6 +71,14 @@ admin hands them directly (in person, over chat, however), optionally
 only ever sees their assigned store(s) — the store dropdown, every API
 call, and even a hand-crafted request for another store's data (403'd
 server-side, not just hidden in the UI) are all restricted to that scope.
+An admin can also edit an existing user's role/store scope later from the
+same Users tab — access isn't fixed at creation time.
+
+Everyone — including the admin — can replace an admin-assigned password
+with one only they know, from the lock icon next to Log out in the
+sidebar. That's the normal way to stop using a temporary password; an
+admin's **Reset password** button on the Users tab is the separate,
+"they're locked out, force-set something new" path.
 
 How it's built, concretely:
 - Accounts live in a local SQLite file (`data/ghoststock.db`, gitignored —
@@ -84,8 +92,12 @@ How it's built, concretely:
 - Pin the seeded admin's credentials instead of letting them be random by
   setting `GHOSTSTOCK_ADMIN_EMAIL` / `GHOSTSTOCK_ADMIN_PASSWORD` before the
   first run.
-- The last remaining admin account can't be deleted from the Users panel —
-  there's always a way back in.
+- The last remaining admin account can't be deleted, or demoted to
+  manager, from the Users panel — there's always a way back in.
+- Login is throttled: 5 failed attempts for an email locks it out for 60
+  seconds (in-memory, resets on restart). A basic brute-force guard for a
+  LAN-facing tool, not a substitute for a real rate limiter if this is
+  ever exposed to the open internet.
 
 ### Using your own data (e.g. a real retailer's export)
 
