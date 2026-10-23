@@ -194,12 +194,9 @@
         </section>
 
         <section id="upload-rough-section" class="card hidden">
-          <h2 class="card-title">Estimated value at risk</h2>
-          <p class="muted-text">
-            ₹-recovered estimation against ground truth is only available for the synthetic demo
-            dataset (a real upload has no hidden labels to validate against). The alert list above
-            still works the same way on your real data.
-          </p>
+          <h2 class="card-title">What's at risk in this store today</h2>
+          <div class="kpi-row" id="upload-risk-kpis" style="margin-top:12px;"></div>
+          <p class="muted-text" id="upload-risk-note"></p>
         </section>
       </div>
 
@@ -223,7 +220,7 @@
 </div>
 
 <!-- ================================================================ modal -->
-<div class="modal-overlay hidden" id="user-modal-overlay">
+<div class="modal-overlay hidden" id="user-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
   <div class="modal" id="user-modal">
     <div class="modal-head">
       <h3 id="user-modal-title">Add a user</h3>
@@ -260,7 +257,7 @@
   </div>
 </div>
 
-<div class="modal-overlay hidden" id="password-modal-overlay">
+<div class="modal-overlay hidden" id="password-modal-overlay" role="dialog" aria-modal="true" aria-label="Change your password">
   <div class="modal" id="password-modal">
     <div class="modal-head">
       <h3>Change your password</h3>
@@ -280,6 +277,22 @@
       <div class="modal-error" id="password-modal-error"></div>
       <button type="submit" class="login-submit" id="password-form-submit">Update password</button>
     </form>
+  </div>
+</div>
+
+<div class="modal-overlay hidden" id="dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+  <div class="modal modal-sm">
+    <div class="modal-head"><h3 id="dialog-title">Confirm</h3></div>
+    <p class="dialog-message" id="dialog-message"></p>
+    <div class="login-field hidden" id="dialog-input-field">
+      <label for="dialog-input" id="dialog-input-label"></label>
+      <input id="dialog-input" autocomplete="new-password" />
+    </div>
+    <div class="modal-error" id="dialog-error"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn-ghost" id="dialog-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="dialog-confirm">Confirm</button>
+    </div>
   </div>
 </div>
 

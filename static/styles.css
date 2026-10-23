@@ -747,6 +747,12 @@ table.users-table td {
 .login-submit:hover { opacity: 0.92; }
 .login-submit:disabled { opacity: 0.5; cursor: wait; }
 
+.modal-sm { max-width: 380px; }
+.dialog-message { margin: 0 0 14px; font-size: 13.5px; line-height: 1.55; color: var(--text-secondary); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.btn-primary.danger { background: var(--status-critical); }
+:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+
 @media (max-width: 860px) {
   .app-shell { flex-direction: column; }
   .sidebar {
@@ -768,6 +774,8 @@ table.users-table td {
   .sidebar-spacer { display: none; }
   .user-card { border-top: none; margin-top: 0; padding: 0; }
   .user-meta { display: none; }
+  .user-avatar { display: none; }
+  .user-card { gap: 2px; }
 }
 
 @media (max-width: 640px) {

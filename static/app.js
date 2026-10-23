@@ -71,6 +71,101 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
+// ------------------------------------------------------- dialogs & overlays
+
+// One place that gives every modal the same keyboard behaviour: focus moves in
+// when it opens, Tab stays inside it, Escape closes it, and focus returns to
+// whatever opened it.
+let _dialogResolve = null;
+const _openers = new Map();
+
+function visibleOverlays() {
+  return [...document.querySelectorAll(".modal-overlay")].filter((o) => !o.classList.contains("hidden"));
+}
+function focusables(root) {
+  return [...root.querySelectorAll("button, input, select, textarea, [href]")]
+    .filter((n) => !n.disabled && n.offsetParent !== null);
+}
+function closeOverlay(overlay) {
+  if (overlay.id === "dialog-overlay") settleDialog(null);
+  else overlay.classList.add("hidden");
+}
+
+function watchOverlays() {
+  document.querySelectorAll(".modal-overlay").forEach((ov) => {
+    new MutationObserver(() => {
+      if (!ov.classList.contains("hidden")) {
+        _openers.set(ov.id, document.activeElement);
+        const f = focusables(ov);
+        const firstField = f.find((n) => n.matches("input, select")) || f[0];
+        if (firstField) firstField.focus();
+      } else {
+        const opener = _openers.get(ov.id);
+        _openers.delete(ov.id);
+        if (opener && document.contains(opener)) opener.focus();
+      }
+    }).observe(ov, { attributes: true, attributeFilter: ["class"] });
+  });
+  document.addEventListener("keydown", (e) => {
+    const open = visibleOverlays();
+    if (!open.length) return;
+    const top = open[open.length - 1];
+    if (e.key === "Escape") { e.preventDefault(); closeOverlay(top); }
+    if (e.key === "Tab") {
+      const f = focusables(top);
+      if (!f.length) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      else if (!top.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+    }
+  });
+}
+
+function settleDialog(value) {
+  el("#dialog-overlay").classList.add("hidden");
+  if (_dialogResolve) { const r = _dialogResolve; _dialogResolve = null; r(value); }
+}
+
+// Styled replacement for window.confirm / window.prompt.
+// Resolves to true/false for confirms, the typed string (or null) for inputs.
+function askDialog({ title, message, confirmText = "Confirm", danger = false, input = null }) {
+  el("#dialog-title").textContent = title;
+  el("#dialog-message").textContent = message;
+  const btn = el("#dialog-confirm");
+  btn.textContent = confirmText;
+  btn.classList.toggle("danger", danger);
+  const field = el("#dialog-input-field");
+  field.classList.toggle("hidden", !input);
+  el("#dialog-error").classList.remove("show");
+  const inp = el("#dialog-input");
+  inp.value = "";
+  if (input) {
+    inp.type = input.type || "text";
+    el("#dialog-input-label").textContent = input.label;
+  }
+  el("#dialog-overlay").classList.remove("hidden");
+  return new Promise((resolve) => {
+    _dialogResolve = resolve;
+    const submit = () => {
+      if (input) {
+        const v = inp.value;
+        if (input.minLength && v.length < input.minLength) {
+          const err = el("#dialog-error");
+          err.textContent = `Must be at least ${input.minLength} characters.`;
+          err.classList.add("show");
+          inp.focus();
+          return;
+        }
+        settleDialog(v);
+      } else settleDialog(true);
+    };
+    btn.onclick = submit;
+    el("#dialog-cancel").onclick = () => settleDialog(input ? null : false);
+    inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
+  }).then((v) => (v === null && !input ? false : v));
+}
+
 // -------------------------------------------------------------------- auth
 
 let currentUser = null;
@@ -136,6 +231,7 @@ function setupPasswordModal() {
 async function init() {
   const ok = await bootstrapAuth();
   if (!ok) return;
+  watchOverlays();
   setupUsersPanel();
 
   el("#latest-btn").addEventListener("click", () => {
@@ -306,6 +402,7 @@ async function refreshAlerts() {
     state.page = 0;
     renderAlertsSubtitle();
     renderKpiRow();
+    renderUploadRisk();
     renderAlertsTable();
   } catch (e) {
     toast(e.message, true);
@@ -314,6 +411,24 @@ async function refreshAlerts() {
 
 function renderAlertsSubtitle() {
   el("#alerts-subtitle").textContent = `Store ${state.store} · as of ${state.dates[state.dateIdx]}`;
+}
+
+function renderUploadRisk() {
+  if (state.source !== "upload") return;
+  const n = state.alerts.length;
+  const perDay = state.alerts.reduce((s, a) => s + a.baseline_mean, 0);
+  const longest = n ? Math.max(...state.alerts.map((a) => a.streak_len)) : 0;
+  const tiles = [
+    { label: "SKUs flagged", value: n },
+    { label: "Units normally sold per day", value: perDay.toFixed(1), cls: "accent" },
+    { label: "Units not sold per week", value: Math.round(perDay * 7) },
+    { label: "Longest silent streak", value: longest + " days" },
+  ];
+  el("#upload-risk-kpis").innerHTML = tiles.map((t) => `<div class="stat-tile">
+      <div class="stat-label">${t.label}</div><div class="stat-value ${t.cls || ""}">${t.value}</div></div>`).join("");
+  el("#upload-risk-note").textContent = n
+    ? "If every flagged SKU is truly a phantom, these units are sales the store is missing. A rupee figure needs a price column, which this file doesn't have, and a real upload has no ground truth to score the estimate against."
+    : "No flagged SKUs for this store and date.";
 }
 
 function renderKpiRow() {
@@ -1018,7 +1133,10 @@ function renderUsersTable(users) {
 }
 
 async function resetUserPassword(u) {
-  const pwd = window.prompt(`New password for ${u.email} (min 8 characters):`);
+  const pwd = await askDialog({
+    title: "Reset password", message: `Set a new password for ${u.email}. Share it with them directly.`,
+    confirmText: "Reset password", input: { label: "New password", type: "text", minLength: 8 },
+  });
   if (!pwd) return;
   try {
     await api(`/api/admin/users/${u.id}/reset_password`, {
@@ -1033,7 +1151,11 @@ async function resetUserPassword(u) {
 }
 
 async function removeUser(u) {
-  if (!window.confirm(`Remove ${u.email}? They won't be able to log in again (an already-open session stays valid until it expires).`)) return;
+  const yes = await askDialog({
+    title: "Remove user", message: `Remove ${u.email}? They'll be signed out and won't be able to log in again.`,
+    confirmText: "Remove", danger: true,
+  });
+  if (!yes) return;
   try {
     await api(`/api/admin/users/${u.id}`, { method: "DELETE" });
     toast(`${u.email} removed.`);
